@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { resolveInheritedFilterParams, type FilterMode } from './inherited-filter-params'
+import { resolveInheritedFilterParams, withDefaultRemoteProject, type FilterMode } from './inherited-filter-params'
 
 const m = (...entries: [string, FilterMode][]) => new Map(entries)
 
@@ -33,5 +33,31 @@ describe('resolveInheritedFilterParams (#970)', () => {
 
   it('returns null for cross-dimension ambiguity (one status + one label include)', () => {
     expect(resolveInheritedFilterParams(m(['todo', 'include']), m(['bug', 'include']), m())).toBeNull()
+  })
+})
+
+describe('withDefaultRemoteProject', () => {
+  const projects = [
+    { id: 'case-13', name: 'CASE-13｜方案评估企业案例' },
+    { id: 'case-02', name: 'CASE-02｜竞品洞察企业案例' },
+    { id: 'case-01', name: 'CASE-01｜用户洞察企业案例' },
+  ]
+
+  it('keeps an explicitly selected project', () => {
+    expect(withDefaultRemoteProject({ project: 'case-13' }, projects)).toEqual({ project: 'case-13' })
+  })
+
+  it('adds the first active business project while preserving other inherited filters', () => {
+    expect(withDefaultRemoteProject({ status: 'todo' }, projects)).toEqual({ status: 'todo', project: 'case-01' })
+    expect(withDefaultRemoteProject(null, projects)).toEqual({ project: 'case-01' })
+  })
+
+  it('ignores archived projects and leaves empty project lists unchanged', () => {
+    expect(withDefaultRemoteProject(null, [
+      { id: 'case-01', name: 'CASE-01', archivedAt: 1 },
+      { id: 'case-02', name: 'CASE-02' },
+    ]))
+      .toEqual({ project: 'case-02' })
+    expect(withDefaultRemoteProject(null, [])).toBeNull()
   })
 })

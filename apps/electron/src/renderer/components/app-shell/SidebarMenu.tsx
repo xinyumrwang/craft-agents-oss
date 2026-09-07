@@ -28,7 +28,7 @@ import {
 import { useMenuComponents } from '@/components/ui/menu-context'
 import { getDocUrl, type DocFeature } from '@craft-agent/shared/docs/doc-links'
 
-export type SidebarMenuType = 'allSessions' | 'flagged' | 'status' | 'sources' | 'skills' | 'automations' | 'projects' | 'labels' | 'views' | 'newSession'
+export type SidebarMenuType = 'allSessions' | 'flagged' | 'status' | 'sources' | 'skills' | 'automations' | 'projects' | 'labels' | 'views' | 'canvas' | 'newSession'
 
 export interface SidebarMenuProps {
   /** Type of sidebar item (determines available menu items) */
@@ -63,6 +63,10 @@ export interface SidebarMenuProps {
   viewId?: string
   /** Handler for "Delete View" action */
   onDeleteView?: (id: string) => void
+  /** Canvas project ID — enables the destructive canvas action */
+  canvasProjectId?: string
+  /** Handler for deleting a local canvas project */
+  onDeleteCanvasProject?: (id: string) => void
 }
 
 /**
@@ -86,6 +90,8 @@ export function SidebarMenu({
   onConfigureViews,
   viewId,
   onDeleteView,
+  canvasProjectId,
+  onDeleteCanvasProject,
 }: SidebarMenuProps) {
   const { t } = useTranslation()
 
@@ -174,6 +180,15 @@ export function SidebarMenu({
           </>
         )}
       </>
+    )
+  }
+
+  if (type === 'canvas' && canvasProjectId && onDeleteCanvasProject) {
+    return (
+      <MenuItem onClick={() => onDeleteCanvasProject(canvasProjectId)}>
+        <Trash2 className="h-3.5 w-3.5" />
+        <span className="flex-1">{t('sidebarMenu.deleteCanvas')}</span>
+      </MenuItem>
     )
   }
 

@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { useAppShellContext } from '@/context/AppShellContext'
 import { useTheme } from '@/context/ThemeContext'
 import { useNavigation } from '@/contexts/NavigationContext'
+import { navigate, routes } from '@/lib/navigate'
 import { CanvasResultReview, type CanvasResult } from '@/components/canvas/CanvasResultReview'
 import { takeCanvasWorkflow } from '@/components/canvas/canvas-launch'
 import type { CanvasWorkflowRequest } from '@craft-agent/session-tools-core/canvas-workflows'
@@ -13,13 +14,14 @@ const CanvasModelPreview = lazy(() => import('@/components/canvas/CanvasModelPre
 
 type CanvasMessage = {
   source: typeof SOURCE
-  type: 'ready' | 'snapshot' | 'projects' | 'create-session' | 'ops-applied' | 'ops-failed' | 'ops-progress' | 'open-session' | 'model-generation' | 'provider-generation' | 'managed-ready' | 'managed-new-project'
+  type: 'ready' | 'snapshot' | 'projects' | 'project-deleted' | 'create-session' | 'ops-applied' | 'ops-failed' | 'ops-progress' | 'open-session' | 'model-generation' | 'provider-generation' | 'managed-ready' | 'managed-new-project'
   nodeId?: string
   providerRequestId?: string
   images?: Array<{ nodeId: string; mimeType: string; base64: string }>
   modelRequestId?: string
   image?: { mimeType: string; base64: string }
   requestId?: string
+  projectId?: string
   revision?: number
   prompt?: string
   snapshot?: any
@@ -155,8 +157,22 @@ export default function CanvasPage() {
           if (activeProjectId.current !== message.activeProjectId) { setResults([]); setSelectedRevision(null) }
           activeProjectId.current = message.activeProjectId || ''
           window.dispatchEvent(new CustomEvent('jonwork:canvas-projects', {
-            detail: { projects: message.projects || [], activeProjectId: message.activeProjectId || '' },
+            detail: { projects: message.projects || [], activeProjectId: message.activeProjectId || '', deletable: managed === false },
           }))
+        }
+
+        if (message.type === 'project-deleted') {
+          if (managed === false && message.projectId) {
+            structured(await window.electronAPI.callCanvasTool(activeWorkspaceId, 'delete_infinite_canvas_state', { projectId: message.projectId }))
+          }
+          const nextActiveProjectId = message.activeProjectId || ''
+          activeProjectId.current = nextActiveProjectId
+          window.dispatchEvent(new CustomEvent('jonwork:canvas-projects', {
+            detail: { projects: message.projects || [], activeProjectId: nextActiveProjectId, deletable: managed === false },
+          }))
+          toast.success('画布已删除')
+          if (!nextActiveProjectId) navigate(routes.view.allSessions())
+          return
         }
 
         if (message.type === 'snapshot' && message.snapshot) {
@@ -261,6 +277,25 @@ export default function CanvasPage() {
     window.addEventListener('jonwork:canvas-project-open', handleCanvasProjectOpen)
     return () => window.removeEventListener('jonwork:canvas-project-open', handleCanvasProjectOpen)
   }, [managed, activeWorkspaceId, businessProjects, retryReceipt])
+
+  useEffect(() => {
+    const handleCanvasProjectDelete = (event: Event) => {
+      const projectId = (event as CustomEvent<{ projectId?: string }>).detail?.projectId
+      if (!projectId || !activeWorkspaceId) return
+      if (managed !== false) { toast.error('企业业务画布不能从本地侧边栏删除。'); return }
+      if (projectId === activeProjectId.current && (delivery.current || retryReceipt || blocked)) {
+        toast.error('当前画布仍有执行中或待处理任务，暂不能删除。')
+        return
+      }
+      void (async () => {
+        await saveQueue.current
+        structured(await window.electronAPI.callCanvasTool(activeWorkspaceId, 'delete_infinite_canvas_state', { projectId }))
+        iframeRef.current?.contentWindow?.postMessage({ source: SOURCE, type: 'delete-project', projectId }, '*')
+      })().catch(error => toast.error('删除画布失败', { description: error instanceof Error ? error.message : String(error) }))
+    }
+    window.addEventListener('jonwork:canvas-project-delete', handleCanvasProjectDelete)
+    return () => window.removeEventListener('jonwork:canvas-project-delete', handleCanvasProjectDelete)
+  }, [activeWorkspaceId, managed, retryReceipt, blocked])
 
   useEffect(() => {
     if (!loaded) return

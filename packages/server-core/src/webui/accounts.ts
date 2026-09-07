@@ -116,6 +116,12 @@ function normalizeUsername(username: string): string {
   return username.trim().toLocaleLowerCase('en-US')
 }
 
+function normalizeExternalEmail(loginEmail: string | undefined): string | undefined {
+  const email = loginEmail?.trim().toLocaleLowerCase('en-US')
+  if (email !== undefined && (email.length > 254 || !/^[^\s@]+@[^\s@]+$/.test(email))) throw new Error('Invalid ERP email')
+  return email
+}
+
 export class AccountStore {
   private readonly filePath: string
   private readonly usersRoot: string
@@ -208,9 +214,12 @@ export class AccountStore {
 
   /** ERP identity comes only from the verified OAuth callback. Never email-match
    * or reuse an existing local account; an explicit migration is a separate task. */
-  async provisionExternal(id: string, member: string, role: AccountRole = 'user'): Promise<PublicAccount> {
+  async provisionExternal(id: string, member: string, role: AccountRole = 'user', workspaceName?: string, loginEmail?: string): Promise<PublicAccount> {
     if (!/^erp-[A-Za-z0-9-]{16,64}$/.test(id) || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,139}$/.test(member)) throw new Error('Invalid ERP identity')
     if (role !== 'admin' && role !== 'user') throw new Error('Invalid ERP role')
+    const displayName = workspaceName?.trim()
+    if (displayName !== undefined && (!displayName || displayName.length > 100 || /[\x00-\x1f\x7f]/.test(displayName))) throw new Error('Invalid workspace name')
+    const externalUsername = normalizeExternalEmail(loginEmail)
     return this.mutate(database => {
       const existing = database.accounts.find(a => a.id === id)
       if (existing) {
@@ -220,16 +229,32 @@ export class AccountStore {
           existing.authVersion = (existing.authVersion ?? 0) + 1
           recordAudit(database, 'role_change', 'erp-sso', id)
         }
+        if (displayName) {
+          const rootPath = join(this.usersRoot, id, 'workspace')
+          const workspace = this.createWorkspace({ name: displayName, rootPath })
+          if (workspace.id !== existing.workspaceId) throw new Error('ERP workspace binding changed unexpectedly')
+        }
+        if (externalUsername) existing.username = externalUsername
         return publicAccount(existing)
       }
       if (database.accounts.some(a => a.externalMember === member || a.normalizedUsername === id)) throw new Error('ERP identity already bound')
       const rootPath = join(this.usersRoot, id, 'workspace')
       mkdirSync(rootPath, { recursive: true })
-      const workspace = this.createWorkspace({ name: `${id} 的工作区`, rootPath })
-      const account: StoredAccount = { id, username: id, normalizedUsername: id, passwordHash: '', externalMember: member,
+      const workspace = this.createWorkspace({ name: displayName ?? 'Jonwork 企业工作区', rootPath })
+      const account: StoredAccount = { id, username: externalUsername ?? id, normalizedUsername: id, passwordHash: '', externalMember: member,
         credits: 0, workspaceId: workspace.id, createdAt: Date.now(), role, disabled: false, authVersion: 0 }
       database.accounts.push(account)
       recordAudit(database, 'register', 'erp-sso', id)
+      return publicAccount(account)
+    })
+  }
+
+  async updateExternalUsername(id: string, member: string, loginEmail: string): Promise<PublicAccount> {
+    const externalUsername = normalizeExternalEmail(loginEmail)!
+    return this.mutate(database => {
+      const account = database.accounts.find(item => item.id === id)
+      if (!account || account.externalMember !== member || account.disabled) throw new Error('ERP account binding unavailable')
+      account.username = externalUsername
       return publicAccount(account)
     })
   }

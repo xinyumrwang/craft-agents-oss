@@ -14,7 +14,6 @@ import {
   StyledDropdownMenuSubTrigger,
   StyledDropdownMenuSubContent,
 } from "@/components/ui/styled-dropdown"
-import { JonworkAppIcon } from "../icons/JonworkAppIcon"
 import { SquarePenRounded } from "../icons/SquarePenRounded"
 import { SETTINGS_ICONS } from "../icons/SettingsIcons"
 import { TopBarButton } from "../ui/TopBarButton"
@@ -131,7 +130,7 @@ function renderMenuSection(
 }
 
 /**
- * Desktop AppMenu — Craft logo dropdown with Edit/View/Window/Settings/Help/Debug submenus.
+ * Desktop AppMenu — neutral navigation trigger with Edit/View/Window/Settings/Help/Debug submenus.
  *
  * Behavior matches the pre-refactor version that lived inline in `TopBar.tsx`.
  * Labels, hotkey strings, and update-actions are pulled from `menu-schema.ts`
@@ -167,8 +166,11 @@ export function DesktopAppMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <TopBarButton aria-label={t("menu.craftMenu")}>
-          <JonworkAppIcon className="h-5 w-5 object-contain" />
+        <TopBarButton
+          aria-label={t("menu.craftMenu")}
+          className="rounded-lg border border-border/70 bg-background/70 shadow-minimal hover:bg-foreground/[0.06]"
+        >
+          <Icons.Menu className="h-[18px] w-[18px] text-foreground/70" strokeWidth={1.8} />
         </TopBarButton>
       </DropdownMenuTrigger>
       <StyledDropdownMenuContent align="start" minWidth="min-w-48">

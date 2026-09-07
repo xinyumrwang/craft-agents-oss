@@ -75,6 +75,9 @@ export function registerCanvasHandlers(server: RpcServer, deps: HandlerDeps): vo
         case 'save_infinite_canvas_state': {
           return store.save(args.snapshot)
         }
+        case 'delete_infinite_canvas_state': {
+          return store.deleteProject(String(args.projectId || ''))
+        }
         case 'get_infinite_canvas_updates': {
           const claimed = await store.claim(String(args.projectId || ''))
           return { updates: claimed.update ? [claimed.update] : [], blocked: claimed.blocked ? { ...claimed.blocked, workflow: canvasWorkflowFromOps(claimed.blocked.ops) } : null, results: store.state(String(args.projectId || '')).results }

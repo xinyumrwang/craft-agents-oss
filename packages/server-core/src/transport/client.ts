@@ -126,7 +126,8 @@ export class WsRpcClient implements RpcClient {
   private connectTimer: ReturnType<typeof setTimeout> | null = null
   private backoffResetTimer: ReturnType<typeof setTimeout> | null = null
   private destroyed = false
-  /** Set when server sends shuttingDown — prevents reconnection attempts. */
+  /** Set only for a shutting-down embedded/local server. Remote deployments
+   * are expected to restart and must keep reconnecting. */
   private permanentlyClosed = false
   private connectStarted = false
   private connectError: Error | null = null
@@ -619,9 +620,11 @@ export class WsRpcClient implements RpcClient {
         }
 
         if (envelope.channel) {
-          // Server is shutting down — stop reconnection before dispatching
+          // An embedded local server shuts down with its desktop host. A remote
+          // server shutdown normally means a deployment/restart, so keep the
+          // reconnect loop alive for thin clients.
           if (envelope.channel === 'server:shuttingDown') {
-            this.permanentlyClosed = true
+            this.permanentlyClosed = this.mode === 'local'
             this.setConnectionState({
               status: 'disconnected',
               lastError: { kind: 'server', message: 'Server is shutting down', code: 'SERVER_SHUTDOWN' },

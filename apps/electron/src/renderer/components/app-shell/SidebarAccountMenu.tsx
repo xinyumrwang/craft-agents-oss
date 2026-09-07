@@ -5,6 +5,7 @@ import {
   CircleUserRound,
   Coins,
   Download,
+  LoaderCircle,
   LogOut,
   Palette,
   RefreshCw,
@@ -21,7 +22,9 @@ import {
   StyledDropdownMenuItem,
   StyledDropdownMenuSeparator,
 } from '@/components/ui/styled-dropdown'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@craft-agent/ui'
 import { cn } from '@/lib/utils'
+import { useUpdateChecker } from '@/hooks/useUpdateChecker'
 import { DESKTOP_WINDOWS_DOWNLOAD_URL } from './desktop-download'
 
 interface WebAccount {
@@ -40,6 +43,62 @@ interface SidebarAccountMenuProps {
   onLogout: () => void
 }
 
+function SidebarUpdateButton() {
+  const { t } = useTranslation()
+  const update = useUpdateChecker()
+  const [isChecking, setIsChecking] = useState(false)
+  const version = update.updateInfo?.latestVersion
+  const label = update.isReadyToInstall && version
+    ? t('menu.installUpdateVersion', { version })
+    : update.isDownloading && version
+      ? t('settings.about.downloading', { version, percent: update.downloadProgress })
+      : t('menu.checkForUpdates')
+
+  // The account menu remains the manual check entry. Keep the compact footer
+  // completely quiet until the background updater has found a newer version.
+  if (!update.updateAvailable) return null
+
+  const handleClick = async () => {
+    if (update.isReadyToInstall) {
+      await update.installUpdate()
+      return
+    }
+    if (update.isDownloading || isChecking) return
+    setIsChecking(true)
+    try {
+      await update.checkForUpdates()
+    } finally {
+      setIsChecking(false)
+    }
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label={label}
+          onClick={() => { void handleClick() }}
+          className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-foreground/[0.07] hover:text-foreground focus-visible:ring-2 focus-visible:ring-accent/40"
+        >
+          {isChecking
+            ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" strokeWidth={1.8} />
+            : <Download className="h-3.5 w-3.5" strokeWidth={1.8} />}
+          {update.isDownloading && (
+            <span className="absolute -right-1.5 -top-1.5 min-w-4 rounded-full bg-foreground px-1 text-center text-[8px] leading-4 text-background shadow-sm">
+              {Math.max(0, Math.min(100, update.downloadProgress))}
+            </span>
+          )}
+          {update.updateInfo?.downloadState === 'error' && (
+            <span className="absolute right-0 top-0 h-2.5 w-2.5 rounded-full border-2 border-background bg-amber-500" />
+          )}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top">{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
 export function SidebarAccountMenu({ onOpenSettings, onLogout }: SidebarAccountMenuProps) {
   const { t } = useTranslation()
   const { resolvedMode, setMode } = useTheme()
@@ -48,6 +107,9 @@ export function SidebarAccountMenu({ onOpenSettings, onLogout }: SidebarAccountM
   const [users, setUsers] = useState<ManagedUser[]>([])
   const [adminError, setAdminError] = useState('')
   const isWebAccountUi = /^https?:$/.test(window.location.protocol)
+  const displayUsername = account.username.includes('@')
+    ? account.username.slice(0, account.username.indexOf('@'))
+    : account.username
 
   useEffect(() => {
     let active = true
@@ -135,22 +197,20 @@ export function SidebarAccountMenu({ onOpenSettings, onLogout }: SidebarAccountM
 
   return (
     <>
+    <div className="flex w-full items-center gap-2">
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="group flex w-full items-center gap-2.5 rounded-[10px] bg-foreground/[0.04] px-2 py-2 text-left outline-none transition-colors hover:bg-foreground/[0.07] focus-visible:ring-2 focus-visible:ring-accent/40"
-          aria-label={account.username}
+          className="group flex min-w-0 flex-1 items-center gap-2.5 rounded-[10px] bg-foreground/[0.04] px-2 py-1 text-left outline-none transition-colors hover:bg-foreground/[0.07] focus-visible:ring-2 focus-visible:ring-accent/40"
+          aria-label={displayUsername}
         >
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent ring-1 ring-accent/20">
             <CircleUserRound className="h-[18px] w-[18px]" />
           </span>
           <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground/85">
-            {account.username}
+            {displayUsername}
           </span>
-          {account.credits != null && (
-            <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{account.credits} 积分</span>
-          )}
         </button>
       </DropdownMenuTrigger>
 
@@ -163,7 +223,7 @@ export function SidebarAccountMenu({ onOpenSettings, onLogout }: SidebarAccountM
       >
         <div className="px-2.5 pb-2 pt-1.5">
           <div className="text-[16px] font-semibold tracking-tight text-foreground">
-            {account.username}
+            {displayUsername}
           </div>
           {account.credits != null && (
             <div className="mt-1 flex items-center gap-1.5 text-[12px] text-muted-foreground">
@@ -243,6 +303,8 @@ export function SidebarAccountMenu({ onOpenSettings, onLogout }: SidebarAccountM
         </StyledDropdownMenuItem>
       </StyledDropdownMenuContent>
     </DropdownMenu>
+    {!isWebAccountUi && <SidebarUpdateButton />}
+    </div>
     {showUserManagement && (
       <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-4" onMouseDown={() => setShowUserManagement(false)}>
         <div className="max-h-[80vh] w-full max-w-2xl overflow-auto rounded-2xl border border-border bg-background p-5 shadow-modal-small" onMouseDown={event => event.stopPropagation()}>

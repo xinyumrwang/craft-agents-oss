@@ -7,9 +7,9 @@ describe('production setup readiness', () => {
     expect(shouldEnforceProductionSetup('production', true)).toBe(false)
     expect(shouldEnforceProductionSetup('development', false)).toBe(false)
   })
-  test('does not accept deferred onboarding as configured credentials', () => {
-    expect(productionSetupBlocker({ isFullyConfigured: true, needsBillingConfig: true, needsCredentials: false })).toContain('尚未配置')
-    expect(productionSetupBlocker({ isFullyConfigured: true, needsBillingConfig: false, needsCredentials: true })).toContain('凭据')
+  test('allows authenticated users to enter before a shared model connection is configured', () => {
+    expect(productionSetupBlocker({ isFullyConfigured: false, needsBillingConfig: true, needsCredentials: true })).toBeNull()
+    expect(productionSetupBlocker({ isFullyConfigured: false, needsBillingConfig: false, needsCredentials: true })).toBeNull()
   })
   test('blocks migration and accepts configured state without claiming connectivity', () => {
     expect(productionSetupBlocker({} as any)).toContain('无效结果')

@@ -10,10 +10,12 @@ node_modules/
 
 # Build artifacts
 dist/
+**/dist/
 *.tgz
 
 # Electron app output (not needed for server)
 apps/electron/release/
+apps/electron/release*/
 apps/electron/vendor/
 
 # Git

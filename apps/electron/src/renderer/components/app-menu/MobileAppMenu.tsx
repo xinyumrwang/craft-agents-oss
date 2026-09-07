@@ -5,7 +5,6 @@ import { useTranslation } from 'react-i18next'
 import * as Icons from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import { useRegisterDismissibleLayer } from '@/context/DismissibleLayerContext'
-import { JonworkAppIcon } from '../icons/JonworkAppIcon'
 import { SquarePenRounded } from '../icons/SquarePenRounded'
 import { SETTINGS_ICONS } from '../icons/SettingsIcons'
 import { TopBarButton } from '../ui/TopBarButton'
@@ -88,7 +87,7 @@ function affordanceFor(action: MobileMenuRow['action']): MobileMenuItemAffordanc
 }
 
 /**
- * Mobile AppMenu — Craft logo trigger that opens a full-screen, navigation-stack sheet.
+ * Mobile AppMenu — neutral navigation trigger that opens a full-screen, navigation-stack sheet.
  *
  * Mounted only when `AppShellContext.isCompactMode === true` via the `AppMenu` router.
  *
@@ -179,9 +178,9 @@ export function MobileAppMenu(props: AppMenuProps) {
         onClick={() => state.isOpen ? close() : dispatch({ type: 'open' })}
         aria-label={t('menu.craftMenu')}
         data-state={state.isOpen ? 'open' : 'closed'}
-        className="rounded-[8px]"
+        className="rounded-[8px] border border-border/70 bg-background/70 shadow-minimal"
       >
-        <JonworkAppIcon className="!h-5 !w-5 object-contain" />
+        <Icons.Menu className="!h-[18px] !w-[18px] text-foreground/70" strokeWidth={1.8} />
       </TopBarButton>
       <MobileMenuSheet
         state={state}

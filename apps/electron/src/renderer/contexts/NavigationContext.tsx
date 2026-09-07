@@ -1155,7 +1155,11 @@ export function NavigationProvider({
       const customEvent = event as CustomEvent<{ route: Route; newPanel?: boolean; targetLaneId?: 'main' }>
       if (customEvent.detail?.route) {
         const { route: r, newPanel, targetLaneId } = customEvent.detail
-        navigate(r, newPanel ? { newPanel, targetLaneId } : undefined)
+        void navigate(r, newPanel ? { newPanel, targetLaneId } : undefined).catch((error: unknown) => {
+          const description = error instanceof Error ? error.message : String(error)
+          console.error('[Navigation] Action failed:', error)
+          toast.error(t('toast.actionFailed'), { description })
+        })
       }
     }
 
@@ -1163,7 +1167,7 @@ export function NavigationProvider({
     return () => {
       window.removeEventListener(NAVIGATE_EVENT, handleNavigateEvent)
     }
-  }, [navigate])
+  }, [navigate, t])
 
   // =========================================================================
   // SIDEBAR HELPERS

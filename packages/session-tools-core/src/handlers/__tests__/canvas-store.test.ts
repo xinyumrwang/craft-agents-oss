@@ -23,6 +23,26 @@ describe('durable canvas delivery', () => {
     expect((await store.claim('p1')).update?.projectId).toBe('p1')
   })
 
+  test('deletes one project snapshot, queue and session bindings without touching another project', async () => {
+    await store.bindSession('session-p1', 'p1')
+    await store.enqueue('session-p1', op(), undefined, 'p1')
+    await store.save({ projectId: 'p2', nodes: [{ id: 'keep' }] })
+
+    expect((await store.deleteProject('p1')).deleted).toBe(true)
+    expect(store.state('p1').state).toBeNull()
+    expect(store.state('p2').state?.snapshot.nodes).toEqual([{ id: 'keep' }])
+    expect(store.sessionProject('session-p1')).toBeUndefined()
+    expect(store.state().pendingUpdates).toHaveLength(0)
+  })
+
+  test('refuses to delete a project whose delivery result is still uncertain', async () => {
+    await store.enqueue('session-p1', [{ type: 'run_generation' }], undefined, 'p1')
+    await store.claim('p1', 1_000)
+    await store.claim('p1', 32_000)
+    await expect(store.deleteProject('p1')).rejects.toThrow('结果不确定')
+    expect(store.state('p1').state).not.toBeNull()
+  })
+
   test('atomically records successful output, validates tokens, and acknowledges idempotently', async () => {
     const job = await store.enqueue('s', op())
     const { update } = await store.claim('p1')

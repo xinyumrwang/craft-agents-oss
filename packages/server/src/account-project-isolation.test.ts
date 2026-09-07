@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { createProject, updateProject } from '@craft-agent/shared/projects'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
+import { parseTaskYaml } from '@craft-agent/shared/tasks'
 import { AccountScopedRpcServer } from './account-rpc-policy'
 
 const roots:string[]=[]
@@ -85,6 +86,24 @@ describe('account project filesystem boundary',()=>{
     const result=await f.handlers.get(RPC_CHANNELS.sessions.CREATE)!(f.ctx,'ws-alice',{projectId:a.id,workingDirectory:join(f.workspace,'projects',b.slug)})
     expect(result.workingDirectory).toBe(join(f.workspace,'projects',a.slug))
     expect(result.projectId).toBe(a.id)
+  })
+  it('allows project-bound task authoring and replaces caller-selected task roots', async () => {
+    const f=fixture();const project=createProject(f.workspace,{name:'Task project'})
+    f.server.handle(RPC_CHANNELS.tasks.CREATE,async(_ctx,_workspace,request)=>parseTaskYaml(request.yaml).spec)
+    const call=f.handlers.get(RPC_CHANNELS.tasks.CREATE)!
+    const spec={id:'managed-task',title:'Managed task',goal:'Test task storage',project:project.id,cwd:join(f.root,'outside'),defaults:{model:'fixture'},nodes:[{id:'step-one',prompt:'Do the bounded step'}]}
+    const result=await call(f.ctx,'ws-alice',{yaml:JSON.stringify(spec)})
+    expect(result.project).toBe(project.id)
+    expect(result.cwd).toBe(join(f.workspace,'projects',project.slug))
+    await expect(call(f.ctx,'ws-alice',{yaml:JSON.stringify({...spec,project:'missing'})})).rejects.toThrow('无权绑定')
+    await expect(call(f.ctx,'ws-alice',{yaml:JSON.stringify({...spec,defaults:{model:'forbidden'}})})).rejects.toThrow('模型')
+  })
+  it('allows managed task reads only inside the account workspace', async () => {
+    const f=fixture()
+    f.server.handle(RPC_CHANNELS.tasks.LIST,async()=>['mine'])
+    const call=f.handlers.get(RPC_CHANNELS.tasks.LIST)!
+    expect(await call(f.ctx,'ws-alice')).toEqual(['mine'])
+    await expect(call(f.ctx,'other-workspace')).rejects.toThrow('工作区')
   })
   it('refuses an old project configuration pointing at a sibling or account-wide directory',async()=>{
     const f=fixture();const a=createProject(f.workspace,{name:'A'});const b=createProject(f.workspace,{name:'B'})

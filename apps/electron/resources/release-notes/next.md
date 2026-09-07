@@ -6,6 +6,14 @@ This file accumulates release notes for the next unreleased version. PRs that ad
 
 ## Improvements
 
+- **远程业务创建恢复** — “新建会话”会在未手动选择项目时自动绑定首个企业案例，不再无响应；任务定义可在账号专属工作区中校验、创建和查看，服务端错误会直接显示在界面中便于重试。
+
+- **精简账号栏** — 账号名称显示为登录邮箱 `@` 前的部分；底栏更新入口缩小并取消蓝色强调，无新版本时完全隐藏，仅在发现更新后出现。
+
+- **统一 Windows 品牌图标** — Windows 任务栏、程序文件和安装包统一使用 Jonwork 图标；应用内部左上角的重复品牌标识改为独立的主菜单按钮，减少标题栏与工作区导航的视觉重复。
+
+- **账号栏更新入口** — 桌面端更新按钮固定在左下账号栏最右侧，不再占用右上工具栏；底栏隐藏积分。按钮可直接检查新版本、查看下载进度，并在下载完成后点击重启安装。远程业务服务器发布或短暂断线时，更新入口仍可使用，客户端会自动重连。
+
 - **Masked editing and visual diagnostics** — Local remodeling now offers region painting and passes the real mask through task execution, retaining it for explicit retries. Unsupported masked-edit interfaces fail instead of silently editing the whole image. Design decomposition, health checks and benchmark diagnosis can generate image-grounded Markdown draft reports; empty model responses and incomplete report counts cannot complete delivery.
 
 - **Direct design workflows** — Canvas users can select input images, choose sketch rendering, scene editing, form/custom fusion or CMF, and request 1–4 outputs without manually building generation nodes. Inputs are explicitly referenced in order, originals are preserved, and missing or partial outputs cannot complete a request. Results remain drafts for design review.

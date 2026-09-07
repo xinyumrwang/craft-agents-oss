@@ -170,6 +170,27 @@ export class CanvasStore {
     })
   }
 
+  deleteProject(projectId: string) {
+    if (!validId(projectId)) throw new Error('Invalid canvas project')
+    return this.transaction(data => {
+      if (!Object.hasOwn(data.snapshots, projectId)) {
+        return { ok: true, deleted: false, activeProjectId: data.activeProjectId }
+      }
+      const inFlight = data.updates.find(entry => entry.projectId === projectId && ['running', 'uncertain'].includes(entry.status))
+      if (inFlight) throw new Error('画布仍有正在执行或结果不确定的任务，请先等待完成或人工处理。')
+
+      delete data.snapshots[projectId]
+      data.updates = data.updates.filter(entry => entry.projectId !== projectId)
+      if (data.sessionProjects) {
+        for (const [sessionId, boundProjectId] of Object.entries(data.sessionProjects)) {
+          if (boundProjectId === projectId) delete data.sessionProjects[sessionId]
+        }
+      }
+      if (data.activeProjectId === projectId) data.activeProjectId = Object.keys(data.snapshots)[0]
+      return { ok: true, deleted: true, activeProjectId: data.activeProjectId }
+    })
+  }
+
   enqueue(sessionId: string, ops: CanvasOp[], summary?: string, projectId?: string, request?: { key: string; fingerprint: string }, upstream?: { revision: number; reviewVersion: number }) {
     if (!Array.isArray(ops) || !ops.length || ops.length > 100 || ops.some(op => !op || !OPS.has(op.type))) throw new Error('ops 需要 1–100 个受支持的画布操作。')
     if (summary !== undefined && (typeof summary !== 'string' || summary.length > 2000)) throw new Error('Invalid canvas summary')
