@@ -9,6 +9,7 @@ import { CANVAS_WORKFLOWS, canvasWorkflowFromOps } from '@craft-agent/session-to
 import { advanceCanvasModel, stepCanvasProvider, canvasWorkflowModel, readCanvasProviderArtifacts, rejectUnisolatedAgentExecution } from '@craft-agent/server-core/webui'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
+import { loadTaskSpec, parseTaskYaml, serializeTaskYaml } from '@craft-agent/shared/tasks'
 
 function requireCanvasSkill(workflowId: unknown, skills: string[]): string {
   if (typeof workflowId !== 'string' || !CANVAS_WORKFLOWS.some(workflow => workflow.id === workflowId)) throw new Error('未知画布业务技能')
@@ -24,6 +25,9 @@ const MANAGED_CHANNELS = new Set<string>([
   ...Object.values(RPC_CHANNELS.file), ...Object.values(RPC_CHANNELS.fs),
   ...Object.values(RPC_CHANNELS.skills),
   ...Object.values(RPC_CHANNELS.projects), RPC_CHANNELS.canvas.CALL_TOOL,
+  RPC_CHANNELS.tasks.VALIDATE, RPC_CHANNELS.tasks.CREATE, RPC_CHANNELS.tasks.GENERATE,
+  RPC_CHANNELS.tasks.RUN, RPC_CHANNELS.tasks.PAUSE, RPC_CHANNELS.tasks.RESUME, RPC_CHANNELS.tasks.STOP,
+  RPC_CHANNELS.tasks.GET, RPC_CHANNELS.tasks.LIST, RPC_CHANNELS.tasks.GET_RESULTS,
   RPC_CHANNELS.workspaces.GET, RPC_CHANNELS.server.GET_WORKSPACES,
   RPC_CHANNELS.window.SWITCH_WORKSPACE,
   RPC_CHANNELS.system.VERSIONS, RPC_CHANNELS.system.IS_DEBUG_MODE,
@@ -140,22 +144,98 @@ export class AccountScopedRpcServer implements RpcServer {
           const input = args[1] ?? {}
           if (input.parentSessionId || input.branchFromSessionId || input.branchFromMessageId) throw new Error('企业入口暂不开放会话上下文复制，请在目标项目新建空白会话')
           if (input.model !== undefined && !policy.models.includes(input.model)) throw new Error('ERP 未授权此模型')
-          if (input.llmConnection) await this.assertConnection(input.llmConnection,policy.models)
           if (!input.projectId) throw new Error('企业会话必须绑定明确的项目')
           const project = await this.assertProject(account.id,input.projectId)
+          const model = input.model ?? resolveManagedDefaultModel(policy)
+          if (!model) throw new Error('ERP 未配置可用模型')
+          const llmConnection = await this.control.connectionForModel(account.workspaceId,model)
           args[1] = { name: typeof input.name === 'string' ? input.name : undefined,
-            model:input.model ?? resolveManagedDefaultModel(policy),llmConnection:input.llmConnection,projectId:input.projectId,
+            model,llmConnection,projectId:input.projectId,
             workingDirectory:project.config.workingDirectory || project.folderPath }
         }
         if (channel === RPC_CHANNELS.sessions.SET_MODEL) {
           if (args[1] !== account.workspaceId || !policy.models.includes(args[2])) throw new Error('ERP 未授权此模型或工作区')
-          if (args[3]) await this.assertConnection(args[3],policy.models)
+          args[3] = await this.control.connectionForModel(account.workspaceId,args[2])
         }
         if (channel === RPC_CHANNELS.sessions.COMMAND) {
           if (args[1].type === 'setConnection') await this.assertConnection(args[1].connectionSlug,policy.models)
           if (args[1].type === 'setProjectId') {
             const session = this.assertSession(account.workspaceId,args[0])
             if ((session.projectId ?? null) !== args[1].projectId) throw new Error('企业会话不能跨项目改绑或解绑，请在目标项目新建会话')
+          }
+        }
+        const managedTaskChannels = [RPC_CHANNELS.tasks.VALIDATE, RPC_CHANNELS.tasks.CREATE,
+          RPC_CHANNELS.tasks.GENERATE, RPC_CHANNELS.tasks.RUN, RPC_CHANNELS.tasks.PAUSE,
+          RPC_CHANNELS.tasks.RESUME, RPC_CHANNELS.tasks.STOP, RPC_CHANNELS.tasks.GET,
+          RPC_CHANNELS.tasks.LIST, RPC_CHANNELS.tasks.GET_RESULTS]
+        if (managedTaskChannels.includes(channel as any) && args[0] !== account.workspaceId) {
+          throw new Error('无权访问该工作区')
+        }
+        if (channel === RPC_CHANNELS.tasks.GENERATE) {
+          const request = args[1]
+          if (!request || typeof request !== 'object' || typeof request.goal !== 'string'
+            || !request.goal.trim() || Buffer.byteLength(request.goal) > 1024 * 1024) {
+            throw new Error('任务目标无效或超过 1MB')
+          }
+          if (!request.projectId) throw new Error('企业任务必须绑定明确的项目')
+          const project = await this.assertProject(account.id, request.projectId)
+          const model = request.model ?? resolveManagedDefaultModel(policy)
+          if (!model || !policy.models.includes(model)) throw new Error('ERP 未授权任务使用的模型')
+          const llmConnection = await this.control.connectionForModel(account.workspaceId, model)
+          if (request.enabledSourceSlugs !== undefined && (!Array.isArray(request.enabledSourceSlugs)
+            || request.enabledSourceSlugs.some((source: unknown) => typeof source !== 'string' || !(policy.sources ?? []).includes(source)))) {
+            throw new Error('ERP 未授权任务使用的数据源')
+          }
+          args[1] = { ...request, model, llmConnection, cwd: project.config.workingDirectory || project.folderPath }
+        }
+        if (channel === RPC_CHANNELS.tasks.CREATE) {
+          const request = args[1]
+          if (!request || typeof request !== 'object' || typeof request.yaml !== 'string' || Buffer.byteLength(request.yaml) > 1024 * 1024) {
+            throw new Error('任务定义无效或超过 1MB')
+          }
+          const parsed = parseTaskYaml(request.yaml)
+          if (!parsed.valid || !parsed.spec) return handler(ctx, ...args)
+          const spec = parsed.spec
+          if (!spec.project) throw new Error('企业任务必须绑定明确的项目')
+          const project = await this.assertProject(account.id, spec.project)
+          const defaultModel = spec.defaults?.model ?? resolveManagedDefaultModel(policy)
+          if (!defaultModel) throw new Error('ERP 未配置可用模型')
+          const models = [defaultModel, ...spec.nodes.map(node => node.model)].filter((model): model is string => Boolean(model))
+          if (models.some(model => !policy.models.includes(model))) throw new Error('ERP 未授权任务使用的模型')
+          spec.defaults = {
+            ...spec.defaults,
+            model: defaultModel,
+            llmConnection: await this.control.connectionForModel(account.workspaceId, defaultModel),
+          }
+          spec.nodes = await Promise.all(spec.nodes.map(async node => {
+            const model = node.model ?? defaultModel
+            return {
+              ...node,
+              llmConnection: await this.control!.connectionForModel(account.workspaceId, model),
+            }
+          }))
+          if ((spec.sources ?? []).some(source => !(policy.sources ?? []).includes(source))) throw new Error('ERP 未授权任务使用的数据源')
+          if ((spec.skills ?? []).some(skill => !(policy.skills ?? []).includes(skill))) throw new Error('ERP 未授权任务使用的技能')
+          for (const sessionId of [request.attachToExistingSession, request.orchestratorSessionId]) {
+            if (!sessionId) continue
+            const existing = this.assertSession(account.workspaceId, sessionId)
+            if (existing.projectId !== spec.project) throw new Error('任务与会话不属于同一业务项目')
+          }
+          // The server owns execution roots. A desktop-authored task may select
+          // business content, never an arbitrary server filesystem directory.
+          spec.cwd = project.config.workingDirectory || project.folderPath
+          args[1] = { ...request, yaml: serializeTaskYaml(spec) }
+        }
+        if ([RPC_CHANNELS.tasks.GET, RPC_CHANNELS.tasks.GET_RESULTS, RPC_CHANNELS.tasks.RUN,
+          RPC_CHANNELS.tasks.PAUSE, RPC_CHANNELS.tasks.RESUME, RPC_CHANNELS.tasks.STOP].includes(channel as any)) {
+          const slug = channel === RPC_CHANNELS.tasks.RUN ? args[1]?.slug : args[1]
+          if (typeof slug !== 'string' || !/^[a-z0-9][a-z0-9-]{0,159}$/.test(slug)) throw new Error('任务标识无效')
+          const loaded = loadTaskSpec(this.accounts.getSkillWorkspaceRoot(account.id), slug)
+          if (loaded?.spec?.project) await this.assertProject(account.id, loaded.spec.project)
+          else if (loaded?.spec) throw new Error('企业任务缺少业务项目绑定')
+          if (channel === RPC_CHANNELS.tasks.RUN && args[1]?.orchestratorSessionId) {
+            const orchestrator = this.assertSession(account.workspaceId, args[1].orchestratorSessionId)
+            if (orchestrator.projectId !== loaded?.spec?.project) throw new Error('任务与会话不属于同一业务项目')
           }
         }
         if (channel === RPC_CHANNELS.canvas.CALL_TOOL) {
@@ -325,7 +405,10 @@ export class AccountScopedRpcServer implements RpcServer {
           const managedDefaultModel = resolveManagedDefaultModel(p)
           const project = (c: any) => {
             if (!c) return null
-            const models = (c.models ?? []).map((m:any) => typeof m==='string' ? {id:m,name:m} : {id:m.id,name:m.name}).filter((m:any)=>p.models.includes(m.id))
+            const models = (c.models ?? []).map((m:any) => typeof m==='string'
+              ? {id:m,name:m}
+              : {id:m.id,name:m.name,description:m.description,descriptionKey:m.descriptionKey}
+            ).filter((m:any)=>p.models.includes(m.id))
             if (!models.length && !p.models.includes(c.defaultModel)) return null
             const servesManagedDefault = managedDefaultModel !== undefined
               && (models.some((model:any) => model.id === managedDefaultModel) || c.defaultModel === managedDefaultModel)

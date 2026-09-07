@@ -18,6 +18,7 @@ type ApiToChannelMapKeys = Exclude<
   | 'getTransportConnectionState'
   | 'getRuntimeEnvironment'
   | 'getDesktopAccount'
+  | 'getDesktopModelEntitlement'
   | 'loginDesktopAccountLocally'
   | 'loginDesktopAccountWithErp'
   | 'logoutDesktopAccount'

@@ -196,6 +196,7 @@ const api = buildClientApi(client, CHANNEL_MAP, (ch) => client.isChannelAvailabl
 
 ;(api as any).getRuntimeEnvironment = (): 'electron' | 'web' => 'electron'
 ;(api as any).getDesktopAccount = () => ipcRenderer.invoke('desktop-account:get')
+;(api as any).getDesktopModelEntitlement = () => ipcRenderer.invoke('desktop-account:model-entitlement')
 ;(api as any).loginDesktopAccountLocally = (serverUrl: string, username: string, password: string) => ipcRenderer.invoke('desktop-account:password', serverUrl, username, password)
 ;(api as any).loginDesktopAccountWithErp = (serverUrl: string) => ipcRenderer.invoke('desktop-account:sso', serverUrl)
 ;(api as any).logoutDesktopAccount = () => ipcRenderer.invoke('desktop-account:logout')

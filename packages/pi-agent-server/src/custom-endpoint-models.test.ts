@@ -78,6 +78,11 @@ describe('buildCustomEndpointModelDef', () => {
     expect((model as { compat?: unknown }).compat).toBeUndefined()
   })
 
+  it('registers OpenAI Responses endpoints without completions-only compatibility flags', () => {
+    const model = buildCustomEndpointModelDef('gpt-model', undefined, undefined, 'openai-responses')
+    expect((model as { compat?: unknown }).compat).toBeUndefined()
+  })
+
   it('does not set store compat when the api is unspecified', () => {
     const model = buildCustomEndpointModelDef('some-model')
     expect((model as { compat?: unknown }).compat).toBeUndefined()

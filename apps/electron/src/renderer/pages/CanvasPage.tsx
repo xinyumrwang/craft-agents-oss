@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { ArrowRight, CheckCircle2, FolderOpen, Loader2, MessageSquarePlus, MousePointer2, Plus, Sparkles, WandSparkles } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAppShellContext } from '@/context/AppShellContext'
 import { useTheme } from '@/context/ThemeContext'
@@ -7,6 +7,9 @@ import { useNavigation } from '@/contexts/NavigationContext'
 import { navigate, routes } from '@/lib/navigate'
 import { CanvasResultReview, type CanvasResult } from '@/components/canvas/CanvasResultReview'
 import { takeCanvasWorkflow } from '@/components/canvas/canvas-launch'
+import { CreateProjectDialog } from '@/components/projects/CreateProjectDialog'
+import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { CanvasWorkflowRequest } from '@craft-agent/session-tools-core/canvas-workflows'
 
 const SOURCE = 'jonwork-infinite-canvas'
@@ -64,6 +67,9 @@ export default function CanvasPage() {
   const [setupError, setSetupError] = useState('')
   const [businessProjects, setBusinessProjects] = useState<Array<{ id: string; name: string }>>([])
   const [businessProjectId, setBusinessProjectId] = useState('')
+  const [createProjectOpen, setCreateProjectOpen] = useState(false)
+  const [creatingProject, setCreatingProject] = useState(false)
+  const [creatingSession, setCreatingSession] = useState(false)
   const bootstrap = useRef<Record<string, unknown> | null>(null)
 
   useEffect(() => {
@@ -81,12 +87,55 @@ export default function CanvasPage() {
     return () => { disposed = true }
   }, [activeWorkspaceId])
 
-  const openBusinessProject = async (id: string) => {
+  const openBusinessProject = useCallback(async (id: string) => {
     if (!activeWorkspaceId || delivery.current || retryReceipt) return
     await saveQueue.current
     const state = structured(await window.electronAPI.callCanvasTool(activeWorkspaceId, 'get_infinite_canvas_state', { projectId: id }))
     bootstrap.current = state.state?.snapshot || { projectId: id, title: businessProjects.find(p => p.id === id)?.name || '业务画布', nodes: [], connections: [], viewport: { x: 0, y: 0, k: 1 } }
     activeProjectId.current = id; setResults([]); setBlocked(null); setBusinessProjectId(id); setLoaded(false)
+  }, [activeWorkspaceId, businessProjects, retryReceipt])
+
+  const createBusinessProject = async (name: string) => {
+    if (!activeWorkspaceId || creatingProject) return
+    setCreatingProject(true)
+    try {
+      const project = await window.electronAPI.createProject(activeWorkspaceId, { name })
+      setBusinessProjects(previous => [...previous, { id: project.id, name: project.name }])
+      setCreateProjectOpen(false)
+      await openBusinessProject(project.id)
+      toast.success('项目已创建，可以开始在画布上工作了')
+    } catch (error) {
+      toast.error('新建项目失败', { description: error instanceof Error ? error.message : String(error) })
+    } finally {
+      setCreatingProject(false)
+    }
+  }
+
+  const startDirectSession = async () => {
+    if (!activeWorkspaceId || creatingSession || progress || retryReceipt) return
+    setCreatingSession(true)
+    try {
+      // Managed execution must always have a server-verified project boundary.
+      // "Direct" means no manual selection: keep the isolation guarantee by
+      // reusing (or lazily creating) a dedicated quick-session project.
+      let targetProject = businessProjectId
+        ? businessProjects.find(project => project.id === businessProjectId)
+        : businessProjects.find(project => project.name === '快速会话')
+      if (!targetProject) {
+        const project = await window.electronAPI.createProject(activeWorkspaceId, {
+          name: '快速会话',
+          description: '无需手动选择项目的临时讨论与快速任务',
+        })
+        targetProject = { id: project.id, name: project.name }
+        setBusinessProjects(previous => previous.some(item => item.id === project.id) ? previous : [...previous, targetProject!])
+      }
+      const session = await window.electronAPI.createSession(activeWorkspaceId, { projectId: targetProject.id })
+      navigateToSession(session.id)
+    } catch (error) {
+      toast.error('无法创建会话', { description: error instanceof Error ? error.message : String(error) })
+    } finally {
+      setCreatingSession(false)
+    }
   }
 
   useEffect(() => {
@@ -276,7 +325,7 @@ export default function CanvasPage() {
     }
     window.addEventListener('jonwork:canvas-project-open', handleCanvasProjectOpen)
     return () => window.removeEventListener('jonwork:canvas-project-open', handleCanvasProjectOpen)
-  }, [managed, activeWorkspaceId, businessProjects, retryReceipt])
+  }, [managed, openBusinessProject])
 
   useEffect(() => {
     const handleCanvasProjectDelete = (event: Event) => {
@@ -345,19 +394,29 @@ export default function CanvasPage() {
   }, [activeWorkspaceId, loaded])
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col bg-background">
+    <div className="relative flex h-full min-h-0 flex-col bg-muted/20">
       {setupError && <div role="alert" className="p-4">{setupError}</div>}
-      {managed && <div className="flex items-center gap-3 border-b p-3 text-sm">
-        <select aria-label="服务器业务项目" value={businessProjectId} disabled={Boolean(progress || retryReceipt)} onChange={event => void openBusinessProject(event.target.value).catch(error => toast.error(String(error)))}>
-          <option value="" disabled>请选择业务项目（不读取或迁移旧画布）</option>
-          {businessProjects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
-        </select>
-        <button disabled={Boolean(progress || retryReceipt)} onClick={async () => {
-          const name = window.prompt('新业务项目名称')?.trim(); if (!name || !activeWorkspaceId) return
-          try { const project = await window.electronAPI.createProject(activeWorkspaceId, { name }); setBusinessProjects(previous => [...previous, { id: project.id, name: project.name }]); await openBusinessProject(project.id) }
-          catch (error) { toast.error(String(error)) }
-        }}>新建业务项目</button>
-        <span>服务端生成和计费 · 成果待审查</span>
+      {managed && <div className="flex min-h-16 shrink-0 items-center gap-3 border-b bg-background/95 px-4 py-3 shadow-xs backdrop-blur">
+        <div className="mr-2 hidden min-w-0 lg:block">
+          <div className="flex items-center gap-2 text-sm font-semibold"><Sparkles className="size-4 text-primary" />创意画布</div>
+          <p className="mt-0.5 text-xs text-muted-foreground">选择项目沉淀资产，或免选择直接开始</p>
+        </div>
+        <Select value={businessProjectId} disabled={Boolean(progress || retryReceipt)} onValueChange={id => void openBusinessProject(id).catch(error => toast.error(error instanceof Error ? error.message : String(error)))}>
+          <SelectTrigger aria-label="服务器业务项目" className="h-10 w-[min(360px,34vw)] rounded-xl bg-muted/40">
+            <SelectValue placeholder="选择一个项目开始创作" />
+          </SelectTrigger>
+          <SelectContent className="max-h-80">
+            {businessProjects.map(project => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Button variant="outline" className="h-10 rounded-xl" disabled={Boolean(progress || retryReceipt || creatingProject)} onClick={() => setCreateProjectOpen(true)}>
+          <Plus />新建项目
+        </Button>
+        <div className="flex-1" />
+        {businessProjectId && <div className="hidden items-center gap-1.5 text-xs text-muted-foreground xl:flex"><CheckCircle2 className="size-3.5 text-emerald-500" />自动保存 · 成果生成后可审查</div>}
+        <Button variant="secondary" className="h-10 rounded-xl" disabled={Boolean(progress || retryReceipt || creatingSession)} onClick={() => void startDirectSession()}>
+          {creatingSession ? <Loader2 className="animate-spin" /> : <MessageSquarePlus />}直接会话
+        </Button>
       </div>}
       {modelPreview && <Suspense fallback={<div role="status">正在载入3D预览…</div>}><CanvasModelPreview path={modelPreview} onClose={() => setModelPreview(null)} /></Suspense>}
       {progress && !blocked && <div role="status" className="border-b p-3 text-sm text-muted-foreground">{progress}</div>}
@@ -403,8 +462,57 @@ export default function CanvasPage() {
           } catch (error) { toast.error(error instanceof Error ? error.message : '无法处理') }
         }}>已核对，跳过此项</button>
       </div>}
-      <div className="relative min-h-0 flex-1 overflow-hidden bg-background">
-        {!loaded && <div className="absolute inset-0 z-10 flex items-center justify-center bg-background text-muted-foreground">{managed && !businessProjectId ? '请先选择或新建服务器业务项目。旧画布保持原样。' : setupError ? '画布配置读取失败，请重开页面后重试。' : <><Loader2 className="mr-2 h-4 w-4 animate-spin" />正在载入 infinite-canvas…</>}</div>}
+      <div className="relative m-3 min-h-0 flex-1 overflow-hidden rounded-2xl border bg-background shadow-xs">
+        {!loaded && managed && !businessProjectId && !setupError && <div className="absolute inset-0 z-10 overflow-auto bg-background">
+          <div className="mx-auto flex min-h-full w-full max-w-5xl items-center px-6 py-10">
+            <div className="w-full">
+              <div className="mb-8 max-w-2xl">
+                <div className="mb-4 grid size-12 place-items-center rounded-2xl bg-primary/10 text-primary"><WandSparkles className="size-6" /></div>
+                <h1 className="text-2xl font-semibold tracking-tight">从这里开始你的第一个设计任务</h1>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">画布适合整理素材、生成方案和连续修改；如果只是想问一个问题，也可以免选项目直接会话。</p>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <section className="rounded-2xl border bg-card p-5 shadow-xs">
+                  <div className="flex items-start gap-3">
+                    <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><FolderOpen /></div>
+                    <div><h2 className="font-semibold">进入项目画布</h2><p className="mt-1 text-sm text-muted-foreground">素材、会话和成果都会归档到项目中。</p></div>
+                  </div>
+                  <div className="mt-5 space-y-2">
+                    {businessProjects.slice(0, 5).map(project => (
+                      <button key={project.id} type="button" className="group flex w-full items-center gap-3 rounded-xl border border-transparent bg-muted/45 px-3 py-2.5 text-left text-sm transition hover:border-primary/20 hover:bg-primary/5" onClick={() => void openBusinessProject(project.id).catch(error => toast.error(error instanceof Error ? error.message : String(error)))}>
+                        <span className="grid size-7 place-items-center rounded-lg bg-background font-medium text-muted-foreground">{project.name.trim().charAt(0).toUpperCase() || '项'}</span>
+                        <span className="min-w-0 flex-1 truncate font-medium">{project.name}</span>
+                        <ArrowRight className="size-4 text-muted-foreground transition group-hover:translate-x-0.5 group-hover:text-primary" />
+                      </button>
+                    ))}
+                    {businessProjects.length === 0 && <p className="rounded-xl border border-dashed px-3 py-4 text-center text-sm text-muted-foreground">还没有项目，创建一个即可开始。</p>}
+                  </div>
+                  <Button className="mt-4 w-full rounded-xl" onClick={() => setCreateProjectOpen(true)}><Plus />新建项目画布</Button>
+                </section>
+
+                <section className="flex flex-col rounded-2xl border bg-card p-5 shadow-xs">
+                  <div className="flex items-start gap-3">
+                    <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-foreground/5"><MessageSquarePlus /></div>
+                    <div><h2 className="font-semibold">直接开始会话</h2><p className="mt-1 text-sm text-muted-foreground">无需手动选项目，系统会自动归入“快速会话”，适合咨询和临时任务。</p></div>
+                  </div>
+                  <div className="my-5 space-y-3 text-sm text-muted-foreground">
+                    <div className="flex gap-3"><MousePointer2 className="mt-0.5 size-4 shrink-0 text-foreground" /><span>输入你的目标，AI 会帮你拆解下一步</span></div>
+                    <div className="flex gap-3"><Sparkles className="mt-0.5 size-4 shrink-0 text-foreground" /><span>随时可以回到画布继续整理和生成</span></div>
+                  </div>
+                  <Button variant="secondary" className="mt-auto w-full rounded-xl" disabled={creatingSession} onClick={() => void startDirectSession()}>
+                    {creatingSession ? <Loader2 className="animate-spin" /> : <MessageSquarePlus />}开启新会话
+                  </Button>
+                </section>
+              </div>
+
+              <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl border border-dashed px-5 py-4 text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">新手 3 步</span><span>1. 选择或创建项目</span><span>2. 拖入素材并描述需求</span><span>3. 审查结果后继续修改</span>
+              </div>
+            </div>
+          </div>
+        </div>}
+        {!loaded && !(managed && !businessProjectId && !setupError) && <div className="absolute inset-0 z-10 flex items-center justify-center bg-background text-muted-foreground">{setupError ? '画布配置读取失败，请重开页面后重试。' : <><Loader2 className="mr-2 h-4 w-4 animate-spin" />正在载入画布…</>}</div>}
         {managed !== null && (!managed || businessProjectId) && <iframe
           key={`${activeWorkspaceId}:${businessProjectId}`}
           ref={iframeRef}
@@ -415,6 +523,7 @@ export default function CanvasPage() {
           sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads allow-pointer-lock"
         />}
       </div>
+      <CreateProjectDialog open={createProjectOpen} onCancel={() => !creatingProject && setCreateProjectOpen(false)} onSubmit={name => void createBusinessProject(name)} />
     </div>
   )
 }

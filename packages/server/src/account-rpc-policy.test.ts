@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import { AccountScopedRpcServer } from './account-rpc-policy'
 import { resolve } from 'node:path'
+import { parseTaskYaml } from '@craft-agent/shared/tasks'
 
 function harness(managed = false, managedPolicy: any = {active:true,models:['test-model']}) {
   const handlers = new Map<string, Function>()
@@ -26,7 +27,13 @@ function harness(managed = false, managedPolicy: any = {active:true,models:['tes
     credit: async () => { credits++ },
   } as any
   const sessions = { getSessions: () => [{ id: 'mine', workspaceId: 'ws-1' }, { id: 'theirs', workspaceId: 'ws-2' }] }
-  const control = managed ? {policy:async()=>managedPolicy,catalog:async()=>[],allowedSources:async()=>[],acceptMessage:async(_account:string,_args:any[],dispatch:()=>Promise<any>)=>dispatch()} as any : undefined
+  const control = managed ? {
+    policy:async()=>managedPolicy,
+    connectionForModel:async()=> 'server-managed-model',
+    catalog:async()=>[],
+    allowedSources:async()=>[],
+    acceptMessage:async(_account:string,_args:any[],dispatch:()=>Promise<any>)=>dispatch(),
+  } as any : undefined
   return { server: new AccountScopedRpcServer(inner, accounts, sessions, control), handlers, getCredits: () => credits }
 }
 
@@ -52,10 +59,40 @@ describe('AccountScopedRpcServer', () => {
     await expect(handlers.get(RPC_CHANNELS.sessions.COMMAND)!(ctx,'mine',{type:'updateWorkingDirectory',dir:'/etc'})).rejects.toThrow('中台模式')
     expect(await handlers.get(RPC_CHANNELS.sessions.COMMAND)!(ctx,'mine',{type:'rename',name:'test'})).toBe(true)
   })
+  it('opens task generation to managed accounts without opening client-selected execution roots', async () => {
+    const policy={active:true,models:['test-model'],sources:['docs'],skills:[]}
+    const {server,handlers}=harness(true,policy)
+    const ctx={clientId:'c',principalId:'user-1',workspaceId:'ws-1'}
+    ;(server as any).assertProject=async()=>({folderPath:resolve('test-only-users/alice/workspace/projects/mine'),config:{workingDirectory:resolve('test-only-users/alice/workspace/projects/mine/work')}})
+    server.handle(RPC_CHANNELS.tasks.GENERATE,async(_ctx,_workspace,input)=>input)
+    const result=await handlers.get(RPC_CHANNELS.tasks.GENERATE)!(ctx,'ws-1',{goal:'Generate a plan',projectId:'mine',model:'test-model',enabledSourceSlugs:['docs'],cwd:'/etc'})
+    expect(result).toMatchObject({projectId:'mine',model:'test-model',llmConnection:'server-managed-model',cwd:resolve('test-only-users/alice/workspace/projects/mine/work')})
+    await expect(handlers.get(RPC_CHANNELS.tasks.GENERATE)!(ctx,'ws-1',{goal:'Generate a plan'})).rejects.toThrow('绑定明确')
+    await expect(handlers.get(RPC_CHANNELS.tasks.GENERATE)!(ctx,'ws-1',{goal:'Generate a plan',projectId:'mine',model:'forbidden'})).rejects.toThrow('模型')
+    await expect(handlers.get(RPC_CHANNELS.tasks.GENERATE)!(ctx,'ws-1',{goal:'Generate a plan',projectId:'mine',model:'test-model',enabledSourceSlugs:['private']})).rejects.toThrow('数据源')
+  })
+  it('sanitizes managed task definitions before saving them', async () => {
+    const policy={active:true,models:['test-model'],sources:['docs'],skills:['review']}
+    const {server,handlers}=harness(true,policy)
+    const ctx={clientId:'c',principalId:'user-1',workspaceId:'ws-1'}
+    const projectRoot=resolve('test-only-users/alice/workspace/projects/mine')
+    ;(server as any).assertProject=async()=>({folderPath:projectRoot,config:{}})
+    server.handle(RPC_CHANNELS.tasks.CREATE,async(_ctx,_workspace,input)=>input)
+    const spec={id:'managed-task',title:'Managed task',goal:'Do the work',project:'mine',cwd:'/etc',sources:['docs'],skills:['review'],defaults:{model:'test-model'},nodes:[{id:'main',prompt:'Do the work'}]}
+    const result=await handlers.get(RPC_CHANNELS.tasks.CREATE)!(ctx,'ws-1',{yaml:JSON.stringify(spec)})
+    expect(parseTaskYaml(result.yaml).spec).toMatchObject({
+      cwd: projectRoot,
+      defaults: { model: 'test-model', llmConnection: 'server-managed-model' },
+      nodes: [{ id: 'main', llmConnection: 'server-managed-model' }],
+    })
+    await expect(handlers.get(RPC_CHANNELS.tasks.CREATE)!(ctx,'ws-1',{yaml:JSON.stringify({...spec,defaults:{model:'forbidden'}})})).rejects.toThrow('模型')
+    await expect(handlers.get(RPC_CHANNELS.tasks.CREATE)!(ctx,'ws-1',{yaml:JSON.stringify({...spec,skills:['private']})})).rejects.toThrow('技能')
+  })
   it('allows account project and canvas metadata but rejects path escapes and unmetered generation',async()=>{
     const {server,handlers}=harness(true)
     const ctx={clientId:'c',principalId:'user-1',workspaceId:'ws-1'}
-    for(const channel of [RPC_CHANNELS.projects.GET,RPC_CHANNELS.projects.UPDATE,RPC_CHANNELS.projects.UPLOAD_ASSET,RPC_CHANNELS.canvas.CALL_TOOL,RPC_CHANNELS.sessions.SET_MODEL]) server.handle(channel,async()=>true)
+    for(const channel of [RPC_CHANNELS.projects.GET,RPC_CHANNELS.projects.UPDATE,RPC_CHANNELS.projects.UPLOAD_ASSET,RPC_CHANNELS.canvas.CALL_TOOL]) server.handle(channel,async()=>true)
+    server.handle(RPC_CHANNELS.sessions.SET_MODEL,async(_ctx,_session,_workspace,_model,connection)=>connection)
     expect(await handlers.get(RPC_CHANNELS.projects.GET)!(ctx,'ws-1')).toBe(true)
     await expect(handlers.get(RPC_CHANNELS.projects.GET)!(ctx,'unregistered-workspace')).rejects.toThrow('工作区')
     await expect(handlers.get(RPC_CHANNELS.projects.UPDATE)!(ctx,'ws-1','../../escape',{})).rejects.toThrow('标识')
@@ -63,17 +100,18 @@ describe('AccountScopedRpcServer', () => {
     await expect(handlers.get(RPC_CHANNELS.projects.UPLOAD_ASSET)!(ctx,'ws-1','mine',{filename:'secret.txt',sourcePath:'/etc/passwd'})).rejects.toThrow('服务器源路径')
     await expect(handlers.get(RPC_CHANNELS.canvas.CALL_TOOL)!(ctx,'ws-1','get_infinite_canvas_state',{projectId:'canvas-a'})).rejects.toThrow('无权绑定')
     await expect(handlers.get(RPC_CHANNELS.sessions.SET_MODEL)!(ctx,'mine','ws-1','forbidden')).rejects.toThrow('模型')
-    expect(await handlers.get(RPC_CHANNELS.sessions.SET_MODEL)!(ctx,'mine','ws-1','test-model')).toBe(true)
+    expect(await handlers.get(RPC_CHANNELS.sessions.SET_MODEL)!(ctx,'mine','ws-1','test-model','desktop-old-connection')).toBe('server-managed-model')
   })
   it('projects the centrally selected DeepSeek model as the managed UI default',async()=>{
     const deepseek='pi/deepseek-v4-pro'
     const {server,handlers}=harness(true,{active:true,models:['claude-opus-4-8',deepseek],default_model:deepseek})
     server.handle(RPC_CHANNELS.llmConnections.LIST_WITH_STATUS,async()=>[
-      {slug:'anthropic',name:'Anthropic',models:[{id:'claude-opus-4-8',name:'Opus 4.8'}],defaultModel:'claude-opus-4-8',isDefault:true},
+      {slug:'anthropic',name:'Anthropic',models:[{id:'claude-opus-4-8',name:'Opus 4.8',description:'最擅长复杂工作'}],defaultModel:'claude-opus-4-8',isDefault:true},
       {slug:'deepseek',name:'DeepSeek',models:[{id:deepseek,name:'DeepSeek V4 Pro'}],defaultModel:deepseek,isDefault:false},
     ])
     const result=await handlers.get(RPC_CHANNELS.llmConnections.LIST_WITH_STATUS)!({clientId:'c',principalId:'user-1',workspaceId:'ws-1'})
     expect(result.find((connection:any)=>connection.isDefault)).toMatchObject({slug:'deepseek',defaultModel:deepseek})
+    expect(result.find((connection:any)=>connection.slug==='anthropic').models[0]).toMatchObject({name:'Opus 4.8',description:'最擅长复杂工作'})
   })
   it('blocks skill workspace spoofing, local editors and file-path bypasses', async () => {
     const { server, handlers } = harness()

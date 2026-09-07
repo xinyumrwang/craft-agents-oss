@@ -21,7 +21,7 @@ function fixture() {
   const ctx={clientId:'c',principalId:'alice',workspaceId:'ws-alice'}
   const accounts={getById:()=>({id:'alice',workspaceId:'ws-alice'}),getSkillWorkspaceRoot:()=>workspace,getExternalMember:()=> 'erp-member'} as any
   const policy={active:true,models:['fixture','meshy/image-to-3d'],skills:[] as string[]}
-  const control={policy:async()=>policy} as any
+  const control={policy:async()=>policy,connectionForModel:async()=> 'server-managed-model'} as any
   const sessions:Array<{id:string;workspaceId:string;projectId?:string}>=[{id:'mine',workspaceId:'ws-alice'}]
   const server=new AccountScopedRpcServer({handle:(channel:string,handler:Function)=>handlers.set(channel,handler)} as any,accounts,
     {getSessions:()=>sessions},control)

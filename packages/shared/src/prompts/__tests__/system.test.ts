@@ -44,6 +44,8 @@ describe('system prompt guidance', () => {
     expect(prompt).toContain('gather them progressively using ordinary language')
     expect(prompt).toContain('Do not impose a fixed number of questions or rounds')
     expect(prompt).toContain('deliverable-brief.md')
+    expect(prompt).toContain('Every local-file link must use the absolute path')
+    expect(prompt).toContain('never use a bare filename or relative path')
     expect(prompt).toContain('deliverable-manifest.json')
     expect(prompt).toContain('do not finish with chat text alone')
     expect(prompt).toContain('Select skills first')
