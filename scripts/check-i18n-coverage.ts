@@ -11,7 +11,7 @@ import { extname, resolve } from 'node:path'
 const ROOT = resolve(import.meta.dir ?? new URL('.', import.meta.url).pathname, '..')
 const EN_LOCALE_PATH = resolve(ROOT, 'packages/shared/src/i18n/locales/en.json')
 const SOURCE_ROOTS = [resolve(ROOT, 'apps'), resolve(ROOT, 'packages')]
-const SKIP_DIRECTORIES = new Set(['node_modules', 'dist', 'build', 'coverage', '.git'])
+const SKIP_DIRECTORIES = new Set(['node_modules', 'dist', 'build', 'coverage', 'public', 'vendor', '.git'])
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx'])
 const TRANSLATION_CALL = /(?:\bt|\bi18n\.t)\(\s*(['"])([^'"\r\n]+)\1/g
 
