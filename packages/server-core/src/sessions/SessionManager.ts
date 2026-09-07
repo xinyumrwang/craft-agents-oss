@@ -5864,9 +5864,22 @@ export class SessionManager implements ISessionManager {
       const centralDefault = await this.executionPolicy.defaultModel?.(managed.workspace.id)
       if (centralDefault && managed.model !== centralDefault) {
         managed.model = centralDefault
-        managed.llmConnection = undefined
-        managed.connectionLocked = false
         this.sendEvent({ type: 'session_model_changed', sessionId, model: centralDefault }, managed.workspace.id)
+      }
+    }
+    if (this.executionPolicy && !managed.isProcessing && managed.model) {
+      const centralConnection = await this.executionPolicy.connectionForModel?.(managed.workspace.id, managed.model)
+      if (centralConnection && managed.llmConnection !== centralConnection) {
+        if (managed.agent) await this.disposeManagedAgentRuntime(managed, 'ERP model connection refresh')
+        managed.llmConnection = centralConnection
+        managed.connectionLocked = true
+        this.persistSession(managed)
+        this.sendEvent({
+          type: 'connection_changed',
+          sessionId,
+          connectionSlug: centralConnection,
+          supportsBranching: resolveSupportsBranching(managed),
+        }, managed.workspace.id)
       }
     }
     this.setLastMessageClientId(sessionId, rpcContext?.callerClientId)

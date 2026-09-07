@@ -4,9 +4,11 @@ import { parseModelEntitlement, type ModelEntitlement } from '@/lib/model-entitl
 
 /** Presentation only. The server remains authoritative for every execution request. */
 export function useModelEntitlement(): ModelEntitlement {
-  const [policy, setPolicy] = useState<ModelEntitlement>({ status: isWebUI ? 'loading' : 'unmanaged' })
+  const hasDesktopEntitlement = typeof window !== 'undefined'
+    && typeof window.electronAPI?.getDesktopModelEntitlement === 'function'
+  const [policy, setPolicy] = useState<ModelEntitlement>({ status: isWebUI || hasDesktopEntitlement ? 'loading' : 'unmanaged' })
   useEffect(() => {
-    if (!isWebUI) return
+    if (!isWebUI && !hasDesktopEntitlement) return
     let disposed = false
     let running = false
     const controller = new AbortController()
@@ -14,6 +16,12 @@ export function useModelEntitlement(): ModelEntitlement {
       if (running) return
       running = true
       try {
+        if (hasDesktopEntitlement) {
+          const entitlement = await window.electronAPI.getDesktopModelEntitlement()
+          const next = entitlement == null ? { status: 'unmanaged' as const } : parseModelEntitlement(entitlement)
+          if (!disposed) setPolicy(next)
+          return
+        }
         const options = { credentials: 'same-origin' as const, cache: 'no-store' as const,
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]) }
         const authResponse = await fetch('/api/auth/policy', options)
@@ -44,6 +52,6 @@ export function useModelEntitlement(): ModelEntitlement {
       window.clearInterval(timer)
       window.removeEventListener('focus', refresh)
     }
-  }, [])
+  }, [hasDesktopEntitlement])
   return policy
 }

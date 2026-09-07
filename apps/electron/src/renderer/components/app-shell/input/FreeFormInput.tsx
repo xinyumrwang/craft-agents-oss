@@ -314,6 +314,12 @@ export function FreeFormInput({
   const managedModels = modelEntitlement.status !== 'unmanaged'
   const disableSend = requestedDisableSend || !maySelectModel(modelEntitlement, currentModel)
 
+  React.useEffect(() => {
+    if (modelEntitlement.status !== 'managed' || !modelEntitlement.models.length
+      || maySelectModel(modelEntitlement, currentModel)) return
+    onModelChange(modelEntitlement.defaultModel ?? modelEntitlement.models[0])
+  }, [currentModel, modelEntitlement, onModelChange])
+
   // Default rotating placeholders for onboarding/empty state (i18n-aware)
   const defaultPlaceholders = React.useMemo(() => [
     t("chatInput.placeholder.workOn"),
@@ -1835,7 +1841,7 @@ export function FreeFormInput({
             />
           )}
           {enableCompactModelPicker && (
-            managedModels ? <ErpModelSelector policy={modelEntitlement} currentModel={currentModel} onModelChange={onModelChange} /> :
+            managedModels ? <ErpModelSelector policy={modelEntitlement} currentModel={currentModel} connections={llmConnections} /> :
             <CompactModelSelector
               currentModel={currentModel}
               currentConnection={currentConnection}
@@ -2073,7 +2079,7 @@ export function FreeFormInput({
           <div className="flex items-center shrink-0">
           {/* 5. Model/Connection Selector - Hidden in compact mode (EditPopover embedding) */}
           {!compactMode && (
-          managedModels ? <ErpModelSelector policy={modelEntitlement} currentModel={currentModel} onModelChange={onModelChange} /> :
+          managedModels ? <ErpModelSelector policy={modelEntitlement} currentModel={currentModel} connections={llmConnections} /> :
           <DropdownMenu open={modelDropdownOpen} onOpenChange={setModelDropdownOpen}>
             <Tooltip>
               <TooltipTrigger asChild>

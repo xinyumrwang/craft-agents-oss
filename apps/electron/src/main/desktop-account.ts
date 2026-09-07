@@ -194,6 +194,24 @@ export async function registerDesktopAccountHandlers(): Promise<void> {
     }
   })
 
+  // Keep the bearer token in the main process while allowing the Electron
+  // renderer to present the same centrally managed model entitlement as WebUI.
+  handle('desktop-account:model-entitlement', async () => {
+    const session = await loadSession()
+    if (!session?.managed) return null
+    const response = await accountFetch(`${session.serverUrl}/api/account/entitlement`, {
+      headers: { Authorization: `Bearer ${session.token}` },
+    })
+    const data = await response.json() as unknown
+    if (!response.ok) {
+      const detail = data && typeof data === 'object' && typeof (data as { error?: unknown }).error === 'string'
+        ? (data as { error: string }).error
+        : '中央模型授权不可用'
+      throw new Error(detail)
+    }
+    return data
+  })
+
   handle('desktop-account:password', async (_event, serverInput: string, username: string, password: string) => {
     if (app.isPackaged) throw new Error('生产客户端仅允许通过 ERPNext 企业账号登录')
     if (typeof username !== 'string' || !/^[A-Za-z0-9._-]{3,32}$/.test(username)

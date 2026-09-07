@@ -226,6 +226,7 @@ import type {
 export interface ElectronAPI {
   // Desktop cloud account (skills and execution remain local)
   getDesktopAccount(): Promise<{ account: { id: string; username: string; credits: number; workspaceId: string; role: 'admin' | 'user'; executionMode?: 'server_only'; billingMode?: 'server' }; serverUrl: string; development: boolean } | null>
+  getDesktopModelEntitlement(): Promise<unknown | null>
   loginDesktopAccountLocally(serverUrl: string, username: string, password: string): Promise<unknown>
   loginDesktopAccountWithErp(serverUrl: string): Promise<unknown>
   logoutDesktopAccount(): Promise<void>

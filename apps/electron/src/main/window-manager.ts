@@ -264,9 +264,26 @@ export class WindowManager {
       }
     })
 
-    // Show window when first paint is ready (faster perceived startup)
-    window.once('ready-to-show', () => {
+    // Show the window as soon as Chromium has painted. Electron can occasionally
+    // miss `ready-to-show` on Windows (notably with Mica/Acrylic enabled), which
+    // otherwise leaves a fully loaded app running without a native window handle.
+    // `did-finish-load` plus the bounded timer are idempotent safety nets.
+    let showFallbackTimer: NodeJS.Timeout | undefined
+    const showWindow = (source: 'ready-to-show' | 'did-finish-load' | 'timeout') => {
+      if (window.isDestroyed() || window.isVisible()) return
+      windowLog.info(`Showing workspace window (${source}): ${workspaceId}`)
       window.show()
+    }
+    window.once('ready-to-show', () => {
+      if (showFallbackTimer) clearTimeout(showFallbackTimer)
+      showWindow('ready-to-show')
+    })
+    window.webContents.once('did-finish-load', () => {
+      showWindow('did-finish-load')
+    })
+    showFallbackTimer = setTimeout(() => showWindow('timeout'), 3_000)
+    window.once('closed', () => {
+      if (showFallbackTimer) clearTimeout(showFallbackTimer)
     })
 
     // Open external links in default browser, but never hand known-dangerous

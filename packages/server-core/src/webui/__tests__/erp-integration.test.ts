@@ -16,7 +16,7 @@ afterEach(()=>{for(const root of roots.splice(0)){if(!resolve(root).startsWith(r
 function temp(){const r=mkdtempSync(join(tmpdir(),'erp-v2-test-'));roots.push(r);return r}
 const account='erp-0123456789abcdef01234567'; const member='fixture-member'
 const policy:AccessSnapshot={schema_version:2,member_id:member,account_id:account,tenant_id:'customer-a',active:true,role:'user',models:['test-model'],skills:[],sources:[],task_price:2,max_concurrency:1,ttl_seconds:60,policy_version:'a'.repeat(64),pricing_version:'fixed-task-v1',execution_mode:'server_only',desktop_channel:'internal'}
-function fixture(){
+function fixture(options: { policy?: Partial<AccessSnapshot>; serverDefaultModel?: string } = {}){
   const root=temp();const calls:Array<{method:string;body:any}>=[];let down=false;let active=true;let role:AccessSnapshot['role']='user';let desktopChannel:AccessSnapshot['desktop_channel']='internal'
   const request=(async(input:string|URL|Request,init:RequestInit={})=>{
     const url=new URL(String(input)); const method=url.pathname.split('.').pop()!;const body=typeof init.body==='string'?JSON.parse(init.body):{}
@@ -24,7 +24,7 @@ function fixture(){
     if(down)return new Response('upstream secret must never escape',{status:503})
     if(method==='get_token')return Response.json({access_token:'fixture-ephemeral-token',token_type:'Bearer'})
     if(method==='my_identity')return Response.json({message:{member_id:member,account_id:account}})
-    if(method==='get_access_snapshot')return Response.json({message:{...policy,active,role,desktop_channel:desktopChannel}})
+    if(method==='get_access_snapshot')return Response.json({message:{...policy,...options.policy,active,role,desktop_channel:desktopChannel}})
     if(method==='pending_grants')return Response.json({message:{grants:[{grant_id:'test-grant',units:10}]}})
     if(method==='pending_resolutions')return Response.json({message:{resolutions:[]}})
     if(method==='resources')return Response.json({message:{schema_version:1,releases:[]}})
@@ -33,7 +33,8 @@ function fixture(){
   })as typeof fetch
   const client=new ErpSsoClient({erp:'https://erp.example',origin:'https://craft.example',clientId:'test-client',serviceUser:'service@example.invalid',apiKey:'test-key',apiSecret:'test-secret'},request)
   const store=new AccountStore({filePath:join(root,'accounts.json'),usersRoot:join(root,'users'),createWorkspace:({name})=>({id:name})})
-  const ledger=new ControlLedger(join(root,'ledger.json'));const runtime=new ErpControlRuntime(client,store,ledger)
+  const ledger=new ControlLedger(join(root,'ledger.json'));const runtime=new ErpControlRuntime(client,store,ledger,
+    async()=>options.serverDefaultModel)
   return{root,client,store,ledger,runtime,calls,setDown(v:boolean){down=v},setActive(v:boolean){active=v},setRole(v:AccessSnapshot['role']){role=v},setDesktopChannel(v:AccessSnapshot['desktop_channel']){desktopChannel=v}}
 }
 
@@ -71,6 +72,15 @@ describe('ERP SSO and reliable business integration',()=>{
     expect(resolveManagedDefaultModel({...policy,models,default_model:'pi/deepseek-v4-flash'})).toBe('pi/deepseek-v4-flash')
     expect(accessSnapshot({...policy,models,default_model:'pi/deepseek-v4-flash'}).default_model).toBe('pi/deepseek-v4-flash')
     expect(()=>accessSnapshot({...policy,models,default_model:'pi/not-authorized'})).toThrow()
+  })
+  it('uses the ready server default when ERP intentionally leaves the model allow-list empty',async()=>{
+    const f=fixture({policy:{models:[]},serverDefaultModel:'gpt-5.6-sol'})
+    const accountRecord=await f.runtime.provision({member_id:member,account_id:account})
+    const effective=await f.runtime.policy(accountRecord.id)
+    expect(effective.models).toEqual(['gpt-5.6-sol'])
+    expect(effective.default_model).toBe('gpt-5.6-sol')
+    await expect(f.runtime.authorize({workspaceId:accountRecord.workspaceId,model:'gpt-5.6-sol',skills:[],sources:[]})).resolves.toBeUndefined()
+    await expect(f.runtime.authorize({workspaceId:accountRecord.workspaceId,model:'client-model',skills:[],sources:[]})).rejects.toThrow('未授权')
   })
   it('binds OAuth state to browser, uses PKCE, and consumes callback once',async()=>{
     const f=fixture();const flow=f.client.start();const url=new URL(flow.url)

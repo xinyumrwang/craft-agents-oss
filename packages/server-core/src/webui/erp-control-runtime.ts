@@ -11,10 +11,39 @@ export interface ExecutionReceipt { complete(status: 'complete' | 'failed' | 'in
 export interface ExecutionPolicy {
   assertAgentExecution(): void
   defaultModel?(workspaceId: string): Promise<string | undefined>
+  connectionForModel?(workspaceId: string, model: string): Promise<string | undefined>
   prepare(workspaceId: string): Promise<void>
   allowedSources(workspaceId: string): Promise<string[]>
   authorize(input: ExecutionPolicyInput): Promise<void>
   begin(input: ExecutionPolicyInput): Promise<ExecutionReceipt | undefined>
+}
+
+type ServerDefaultModelResolver = () => Promise<string | undefined>
+
+/** Resolve the single model selected by the server administrator. Credentials,
+ * endpoint and protocol stay server-side; managed clients receive only the
+ * model id through their entitlement snapshot. */
+async function configuredServerDefaultModel(): Promise<string | undefined> {
+  const { getDefaultLlmConnection, getLlmConnections } = await import('@craft-agent/shared/config/storage')
+  const { getCredentialManager } = await import('@craft-agent/shared/credentials')
+  const defaultSlug = getDefaultLlmConnection()
+  const connections = getLlmConnections().sort((a, b) =>
+    Number(b.slug === defaultSlug) - Number(a.slug === defaultSlug))
+  const credentials = getCredentialManager()
+  for (const connection of connections) {
+    const first = connection.models?.[0]
+    const model = connection.defaultModel ?? (typeof first === 'string' ? first : first?.id)
+    if (!model || !/^[A-Za-z0-9][A-Za-z0-9_./:@+-]{0,127}$/.test(model)) continue
+    if (connection.providerType === 'pi_compat'
+      && !(connection.baseUrl?.trim() && connection.customEndpoint?.api)) continue
+    const ready = await credentials.hasLlmCredentials(
+      connection.slug,
+      connection.authType,
+      connection.providerType,
+    )
+    if (ready) return model
+  }
+  return undefined
 }
 
 /** ERP is identity/policy authority; this server is the wallet/execution authority.
@@ -30,13 +59,63 @@ export class ErpControlRuntime implements ExecutionPolicy {
     if (!account) throw new Error('此工作区未绑定 ERP')
     return resolveManagedDefaultModel(await this.policy(account.id))
   }
+  /** Resolve centrally configured provider runtime for an ERP-authorized model.
+   * The desktop never chooses this connection and never receives its credential. */
+  async connectionForModel(workspaceId: string, model: string): Promise<string> {
+    const account = this.accounts.accountForWorkspace(workspaceId)
+    if (!account) throw new Error('此工作区未绑定 ERP')
+    const policy = await this.policy(account.id)
+    if (!policy.models.includes(model)) throw new Error('ERP 未授权此模型')
+    const { getDefaultLlmConnection, getLlmConnections } = await import('@craft-agent/shared/config/storage')
+    const { getCredentialManager } = await import('@craft-agent/shared/credentials')
+    const connections = getLlmConnections()
+    const serves = (connection: (typeof connections)[number]) =>
+      connection.defaultModel === model || (connection.models ?? []).some(entry =>
+        (typeof entry === 'string' ? entry : entry.id) === model)
+    const candidates = connections.filter(serves)
+    const credentialManager = getCredentialManager()
+    const ready = (await Promise.all(candidates.map(async connection => {
+      const endpointReady = connection.providerType !== 'pi_compat'
+        || Boolean(connection.baseUrl?.trim() && connection.customEndpoint?.api)
+      const credentialsReady = await credentialManager.hasLlmCredentials(
+        connection.slug,
+        connection.authType,
+        connection.providerType,
+      )
+      return endpointReady && credentialsReady ? connection : undefined
+    }))).filter((connection): connection is (typeof candidates)[number] => Boolean(connection))
+    const defaultSlug = getDefaultLlmConnection()
+    const connection = ready.find(candidate => candidate.slug === defaultSlug) ?? ready[0]
+    if (!connection) {
+      const reason = candidates.length ? '对应连接缺少端点、协议或服务端凭据' : '服务端未配置对应的提供商连接'
+      throw new Error(`ERP 已授权模型 ${model}，但${reason}`)
+    }
+    return connection.slug
+  }
   private cache = new Map<string, { value: AccessSnapshot; expires: number }>()
   private syncPromise?: Promise<void>
   private timer?: ReturnType<typeof setInterval>
   private inFlightRequests = new Map<string, Promise<{accepted:true; messageId:string}>>()
-  constructor(readonly client: ErpSsoClient, readonly accounts: AccountStore, readonly ledger = new ControlLedger()) {
+  constructor(readonly client: ErpSsoClient, readonly accounts: AccountStore, readonly ledger = new ControlLedger(),
+    private readonly serverDefaultModel: ServerDefaultModelResolver = configuredServerDefaultModel) {
     ledger.recoverInterrupted()
     for (const a of accounts.listAccounts()) if (accounts.getExternalMember(a.id)) this.clearSkills(a.id)
+  }
+  private async effectivePolicy(value: AccessSnapshot): Promise<AccessSnapshot> {
+    // An explicit ERP model list remains an account-specific allow-list. When
+    // ERP leaves it empty, the centrally configured server default becomes the
+    // complete allow-list so users never configure provider connections locally.
+    if (value.models.length) return value
+    const model = await this.serverDefaultModel()
+    if (!model) return value
+    return {
+      ...value,
+      models: [model],
+      default_model: model,
+      policy_version: createHash('sha256')
+        .update(`${value.policy_version}\nserver-default:${model}`)
+        .digest('hex'),
+    }
   }
   private clearSkills(account: string) {
     const root = this.accounts.getSkillWorkspaceRoot(account)
@@ -68,7 +147,7 @@ export class ErpControlRuntime implements ExecutionPolicy {
   start() { if (!this.timer) { this.timer = setInterval(() => { void this.sync() }, 15000); this.timer.unref?.(); void this.sync() } }
   dispose() { if (this.timer) clearInterval(this.timer) }
   async provision(identity: { member_id: string; account_id: string }): Promise<PublicAccount> {
-    const p = await this.client.access(identity.member_id)
+    const p = await this.effectivePolicy(await this.client.access(identity.member_id))
     if (p.account_id !== identity.account_id || p.member_id !== identity.member_id || !p.active) throw new Error('ERP identity or entitlement invalid')
     const account = await this.accounts.provisionExternal(p.account_id, p.member_id, p.role)
     this.ledger.ensure(account.id, p.member_id)
@@ -83,7 +162,7 @@ export class ErpControlRuntime implements ExecutionPolicy {
     if (!member || !this.accounts.getById(account) || this.accounts.getById(account)!.disabled) throw new Error('请通过 ERP 账号登录')
     const cached = this.cache.get(account)
     if (!force && cached && cached.expires > Date.now()) return cached.value
-    const value = await this.client.access(member)
+    const value = await this.effectivePolicy(await this.client.access(member))
     if (value.member_id !== member || value.account_id !== account) throw new Error('ERP identity mismatch')
     this.cache.set(account, {value, expires:Date.now()+value.ttl_seconds*1000})
     return value
