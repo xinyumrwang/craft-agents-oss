@@ -79,6 +79,10 @@ export type { CreateTaskArgs } from './create-task.ts';
 export { handleArchiveSession } from './archive-session.ts';
 export type { ArchiveSessionArgs } from './archive-session.ts';
 
+// Integrated infinite canvas
+export { handleApplyCanvasOps, handleGetCanvasContext } from './infinite-canvas.ts';
+export type { ApplyCanvasOpsArgs, GetCanvasContextArgs } from './infinite-canvas.ts';
+
 // Pages
 export {
   handleListPages,

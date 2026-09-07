@@ -190,11 +190,17 @@ export const routes = {
         ? `projects/project/${projectSlug}` as const
         : 'projects' as const,
 
+    /** Cross-project generated asset query view. */
+    projectAssets: () => 'projects/assets' as const,
+
     /** Pages view (full-width library grid, or one page's embedded render) */
     pages: (pageSlug?: string) =>
       pageSlug
         ? `pages/page/${pageSlug}` as const
         : 'pages' as const,
+
+    /** Integrated project-backed infinite canvas. */
+    canvas: () => 'canvas' as const,
 
     /** Kanban board view (sessions navigator, board view mode, all sessions) */
     board: () => 'board' as const,

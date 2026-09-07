@@ -1,7 +1,7 @@
 {
   "name": "@craft-agent/electron",
   "version": "0.13.1",
-  "description": "Electron desktop app for Craft Agents",
+  "description": "Electron desktop app for Jonwork",
   "main": "dist/main.cjs",
   "private": true,
   "author": {
@@ -73,12 +73,14 @@
     "sharp": "0.34.5",
     "sonner": "^2.0.7",
     "strip-markdown": "^6.0.0",
+    "three": "^0.170.0",
     "undici": "^7.22.0",
     "unist-util-visit": "^5.0.0",
     "vaul": "^1.1.2",
     "ws": "^8.19.0"
   },
   "devDependencies": {
+    "@types/three": "^0.170.0",
     "@types/ws": "^8.18.1"
   }
 }

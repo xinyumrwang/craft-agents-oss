@@ -32,6 +32,7 @@ import {
   isSkillsNavigation,
   isAutomationsNavigation,
   isProjectsNavigation,
+  isCanvasNavigation,
   isPagesNavigation,
 } from '@/contexts/NavigationContext'
 import { useSessionSelection, useIsMultiSelectActive, useSelectedIds, useSelectionCount } from '@/hooks/useSession'
@@ -43,6 +44,8 @@ import SkillInfoPage from '@/pages/SkillInfoPage'
 import { getSettingsPageComponent } from '@/pages/settings/settings-pages'
 import { AutomationInfoPage } from '../automations/AutomationInfoPage'
 import ProjectInfoPage from '@/pages/ProjectInfoPage'
+import ProjectAssetsPage from '@/pages/ProjectAssetsPage'
+import CanvasPage from '@/pages/CanvasPage'
 import { KanbanBoardContainer } from './kanban/KanbanBoardContainer'
 import { PagesHome } from '../pages/PagesHome'
 import { PageView } from '../pages/PageView'
@@ -236,6 +239,14 @@ export function MainContentPanel({
     </StoplightProvider>
   )
 
+  if (isCanvasNavigation(navState)) {
+    return wrapWithStoplight(
+      <Panel variant="grow" className={className}>
+        <CanvasPage />
+      </Panel>
+    )
+  }
+
   // Settings navigator - uses component map from settings-pages.ts.
   // Bare `settings` route (subpage === null) means navigator-only view in compact mode;
   // PanelStackContainer hides the content panel entirely. On desktop the panel still
@@ -377,6 +388,13 @@ export function MainContentPanel({
   // Projects navigator - show project detail page or empty state
   if (isProjectsNavigation(navState)) {
     const projectDetails = navState.details
+    if (projectDetails?.type === 'projectAssets') {
+      return wrapWithStoplight(
+        <Panel variant="grow" className={className}>
+          <ProjectAssetsPage />
+        </Panel>
+      )
+    }
     if (projectDetails && projectDetails.type === 'project') {
       return wrapWithStoplight(
         <Panel variant="grow" className={className}>

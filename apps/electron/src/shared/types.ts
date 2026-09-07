@@ -224,6 +224,12 @@ import type {
 } from '@craft-agent/shared/protocol'
 
 export interface ElectronAPI {
+  // Desktop cloud account (skills and execution remain local)
+  getDesktopAccount(): Promise<{ account: { id: string; username: string; credits: number; workspaceId: string; role: 'admin' | 'user'; executionMode?: 'server_only'; billingMode?: 'server' }; serverUrl: string; development: boolean } | null>
+  loginDesktopAccountLocally(serverUrl: string, username: string, password: string): Promise<unknown>
+  loginDesktopAccountWithErp(serverUrl: string): Promise<unknown>
+  logoutDesktopAccount(): Promise<void>
+
   // Session management
   getSessions(): Promise<Session[]>
   getUnreadSummary(): Promise<UnreadSummary>
@@ -499,6 +505,8 @@ export interface ElectronAPI {
 
   // Skills
   getSkills(workspaceId: string, workingDirectory?: string): Promise<LoadedSkill[]>
+  getAccountSkill?(slug: string): Promise<import('@craft-agent/shared/skills').AccountSkillBundle>
+  saveAccountSkill?(input: import('@craft-agent/shared/skills').SaveAccountSkillInput): Promise<import('@craft-agent/shared/skills').AccountSkillBundle>
   getSkillFiles?(workspaceId: string, skillSlug: string): Promise<SkillFile[]>
   deleteSkill(workspaceId: string, skillSlug: string): Promise<void>
   openSkillInEditor(workspaceId: string, skillSlug: string): Promise<void>
@@ -528,6 +536,11 @@ export interface ElectronAPI {
   // Generic workspace image loading/saving
   readWorkspaceImage(workspaceId: string, relativePath: string): Promise<string>
   writeWorkspaceImage(workspaceId: string, relativePath: string, base64: string, mimeType: string): Promise<void>
+  callCanvasTool(workspaceId: string, toolName: string, args?: Record<string, unknown>): Promise<{
+    content?: Array<{ type: string; text?: string }>
+    structuredContent?: unknown
+    isError?: boolean
+  }>
 
   // Tool icon mappings
   getToolIconMappings(): Promise<ToolIconMapping[]>
@@ -927,7 +940,16 @@ export interface AutomationsNavigationState {
  */
 export interface ProjectsNavigationState {
   navigator: 'projects'
-  details: { type: 'project'; projectSlug: string } | null
+  details:
+    | { type: 'project'; projectSlug: string }
+    | { type: 'projectAssets' }
+    | null
+  rightSidebar?: RightSidebarPanel
+}
+
+export interface CanvasNavigationState {
+  navigator: 'canvas'
+  details: { type: 'canvas' }
   rightSidebar?: RightSidebarPanel
 }
 
@@ -954,6 +976,7 @@ export type NavigationState =
   | SkillsNavigationState
   | AutomationsNavigationState
   | ProjectsNavigationState
+  | CanvasNavigationState
   | PagesNavigationState
 
 export const isSessionsNavigation = (
@@ -980,6 +1003,10 @@ export const isProjectsNavigation = (
   state: NavigationState
 ): state is ProjectsNavigationState => state.navigator === 'projects'
 
+export const isCanvasNavigation = (
+  state: NavigationState
+): state is CanvasNavigationState => state.navigator === 'canvas'
+
 export const isPagesNavigation = (
   state: NavigationState
 ): state is PagesNavigationState => state.navigator === 'pages'
@@ -991,6 +1018,7 @@ export const DEFAULT_NAVIGATION_STATE: NavigationState = {
 }
 
 export const getNavigationStateKey = (state: NavigationState): string => {
+  if (state.navigator === 'canvas') return 'canvas'
   if (state.navigator === 'sources') {
     if (state.details) {
       return `sources/source/${state.details.sourceSlug}`
@@ -1013,6 +1041,7 @@ export const getNavigationStateKey = (state: NavigationState): string => {
     if (state.details?.type === 'project') {
       return `projects/project/${state.details.projectSlug}`
     }
+    if (state.details?.type === 'projectAssets') return 'projects/assets'
     return 'projects'
   }
   if (state.navigator === 'pages') {
@@ -1039,6 +1068,7 @@ export const getNavigationStateKey = (state: NavigationState): string => {
 }
 
 export const parseNavigationStateKey = (key: string): NavigationState | null => {
+  if (key === 'canvas') return { navigator: 'canvas', details: { type: 'canvas' } }
   // Handle sources
   if (key === 'sources') return { navigator: 'sources', details: null }
   if (key.startsWith('sources/source/')) {
@@ -1071,6 +1101,9 @@ export const parseNavigationStateKey = (key: string): NavigationState | null => 
 
   // Handle projects
   if (key === 'projects') return { navigator: 'projects', details: null }
+  if (key === 'projects/assets') {
+    return { navigator: 'projects', details: { type: 'projectAssets' } }
+  }
   if (key.startsWith('projects/project/')) {
     const projectSlug = key.slice(17)
     if (projectSlug) {

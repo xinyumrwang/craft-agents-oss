@@ -404,6 +404,9 @@ export const RPC_CHANNELS = {
     DELETE_ASSET: 'projects:deleteAsset',
     CHANGED: 'projects:changed',
   },
+  canvas: {
+    CALL_TOOL: 'canvas:callTool',
+  },
   pages: {
     GET: 'pages:get',
     GET_ONE: 'pages:getOne',

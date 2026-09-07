@@ -180,6 +180,9 @@ export {
   handleRenderTemplate,
   // Send Developer Feedback
   handleSendDeveloperFeedback,
+  // Integrated infinite canvas
+  handleGetCanvasContext,
+  handleApplyCanvasOps,
   // Pages
   handleListPages,
   handleGetPage,
@@ -205,6 +208,8 @@ export type {
   ScriptSandboxArgs,
   RenderTemplateArgs,
   SendDeveloperFeedbackArgs,
+  GetCanvasContextArgs,
+  ApplyCanvasOpsArgs,
   ListPagesArgs,
   GetPageArgs,
   CreatePageArgs,
