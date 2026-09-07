@@ -8,6 +8,7 @@ import {
   saveWorkspaceConfig,
   createWorkspaceAtPath,
   isValidWorkspace,
+  renameWorkspaceFolder,
 } from '../workspaces/storage.ts';
 import { findIconFile } from '../utils/icon.ts';
 import { extractWorkspaceSlugFromPath } from '../utils/workspace-slug.ts';
@@ -804,6 +805,9 @@ export function addWorkspace(workspace: Omit<Workspace, 'id' | 'createdAt' | 'sl
     };
     const existingIndex = config.workspaces.indexOf(existing);
     config.workspaces[existingIndex] = updated;
+    // Keep the folder-level config (the workspace display-name authority used
+    // by desktop clients) in sync with the global workspace registry.
+    renameWorkspaceFolder(workspace.rootPath, workspace.name);
     saveConfig(config);
     return updated;
   }

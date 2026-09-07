@@ -1671,7 +1671,7 @@
   "time.minutesAgo_many": "hace {{count}} minutos",
   "time.minutesAgo_one": "hace {{count}} minuto",
   "time.minutesAgo_other": "hace {{count}} minutos",
-  "toast.actionFailed": "Action could not be completed",
+  "toast.actionFailed": "No se pudo completar la acción",
   "toast.appWillRestart": "La aplicación se reiniciará automáticamente.",
   "toast.authenticationFailed": "Autenticación fallida — haz clic para reconectar",
   "toast.cannotRemoveActiveWorkspace": "No se puede eliminar el workspace activo",

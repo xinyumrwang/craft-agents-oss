@@ -57,6 +57,15 @@ function getMimeType(path: string): string {
   return MIME_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream'
 }
 
+function ssoStatusPage(kind: 'success' | 'error'): string {
+  const success = kind === 'success'
+  const title = success ? '登录完成' : '登录未完成'
+  const message = success
+    ? '身份验证成功，请返回 Jonwork 客户端继续使用。'
+    : '本次授权未能完成。授权链接只能使用一次，请重新发起登录；如果刚修改过账号，也可以刷新后再试。'
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f6f7f9;color:#1f2937;font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif}.card{width:min(480px,calc(100vw - 32px));padding:36px;border:1px solid #e5e7eb;border-radius:18px;background:#fff;box-shadow:0 18px 48px rgba(15,23,42,.08)}h1{margin:0 0 12px;font-size:26px}p{margin:0;color:#64748b;line-height:1.7}.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:26px}a{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;border-radius:10px;text-decoration:none;font-weight:650;background:#eef2f7;color:#1f2937}a.primary{background:#111827;color:#fff}</style></head><body><main class="card"><h1>${title}</h1><p>${message}</p><div class="actions">${success ? '<a class="primary" href="/">进入 Jonwork</a>' : '<a class="primary" href="/api/auth/sso/start">重新登录</a><a href="">刷新重试</a>'}<a href="/login">返回登录页</a></div></main></body></html>`
+}
+
 function getRequestProto(req: Request, trustProxyHeaders: boolean): string {
   const forwarded = trustProxyHeaders ? proxyOriginValue(req, 'proto')?.toLowerCase() : null
   // A forwarded header must never downgrade a directly encrypted connection.
@@ -308,7 +317,7 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
         if (path === '/api/auth/sso/callback' && req.method === 'GET') {
           const browser=req.headers.get('cookie')?.split(';').map(s=>s.trim()).find(s=>s.startsWith('craft_sso='))?.slice('craft_sso='.length)??''
           const result=await erpControl.client.complete(url.searchParams.get('state')??'',url.searchParams.get('code')??'',browser)
-          if (result.device) return new Response('<!doctype html><meta charset="utf-8"><title>登录完成</title><p>ERP 登录成功，请返回 Jonwork 客户端。</p>',{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Set-Cookie':ssoCookie('',0)}})
+          if (result.device) return new Response(ssoStatusPage('success'),{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Set-Cookie':ssoCookie('',0)}})
           const account=await erpControl.provision(result.identity)
           const token=await createSessionToken(secret,account.id,account.authVersion??0)
           const h=new Headers({...headers,Location:'/'}); h.append('Set-Cookie',ssoCookie('',0)); h.append('Set-Cookie',buildSessionCookie(token,erpControl.client.config.origin.startsWith('https:')))
@@ -327,7 +336,12 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
           return Response.json({accessToken:token,account},{headers})
         }
         return Response.json({error:'Not found'},{status:404,headers})
-      } catch { return Response.json({error:'ERP 登录或授权验证失败，请重新登录或联系管理员'},{status:403,headers}) }
+      } catch {
+        if (path === '/api/auth/sso/callback' && req.method === 'GET') {
+          return new Response(ssoStatusPage('error'), { status: 403, headers: { ...headers, 'Content-Type': 'text/html; charset=utf-8', 'Set-Cookie': ssoCookie('', 0) } })
+        }
+        return Response.json({error:'ERP 登录或授权验证失败，请重新登录或联系管理员'},{status:403,headers})
+      }
     }
 
     // ── Auth endpoint ──

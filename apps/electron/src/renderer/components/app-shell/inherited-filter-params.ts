@@ -7,6 +7,12 @@ export interface InheritedNewSessionParams {
   project?: string
 }
 
+interface NewSessionProjectCandidate {
+  id: string
+  name: string
+  archivedAt?: number
+}
+
 const includeKeys = <K extends string>(m: Map<K, FilterMode>): K[] =>
   [...m.entries()].filter(([, mode]) => mode === 'include').map(([id]) => id)
 
@@ -33,4 +39,23 @@ export function resolveInheritedFilterParams<S extends string, L extends string,
   if (labelIncludes.length === 1) return { label: labelIncludes[0] }
   if (projectIncludes.length === 1) return { project: projectIncludes[0] }
   return null
+}
+
+/**
+ * Remote managed workspaces require every session to belong to a concrete
+ * business project. Keep an explicitly inherited project; otherwise choose the
+ * first active project by display name so the result is deterministic even
+ * when the server returns projects in filesystem order.
+ */
+export function withDefaultRemoteProject(
+  inherited: InheritedNewSessionParams | null,
+  projects: NewSessionProjectCandidate[],
+): InheritedNewSessionParams | null {
+  if (inherited?.project) return inherited
+  const first = projects
+    .filter(project => !project.archivedAt)
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+    .at(0)
+  if (!first) return inherited
+  return { ...(inherited ?? {}), project: first.id }
 }

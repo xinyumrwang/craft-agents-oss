@@ -47,6 +47,10 @@ export interface SidebarContextMenuConfig {
   viewId?: string
   /** Handler for "Delete View" action */
   onDeleteView?: (id: string) => void
+  /** Canvas project ID — when set, this is an individual local canvas */
+  canvasProjectId?: string
+  /** Handler for deleting a local canvas project */
+  onDeleteCanvasProject?: (id: string) => void
 }
 
 /**
@@ -251,6 +255,8 @@ export function LeftSidebar({ links, isCollapsed, getItemProps, focusedItemId, i
                         onConfigureViews={link.contextMenu.onConfigureViews}
                         viewId={link.contextMenu.viewId}
                         onDeleteView={link.contextMenu.onDeleteView}
+                        canvasProjectId={link.contextMenu.canvasProjectId}
+                        onDeleteCanvasProject={link.contextMenu.onDeleteCanvasProject}
                       />
                     </ContextMenuProvider>
                   </StyledContextMenuContent>
@@ -410,6 +416,8 @@ function SortableStatusList({ items, onReorder, getItemProps, focusedItemId, tra
                         onConfigureViews={item.contextMenu.onConfigureViews}
                         viewId={item.contextMenu.viewId}
                         onDeleteView={item.contextMenu.onDeleteView}
+                        canvasProjectId={item.contextMenu.canvasProjectId}
+                        onDeleteCanvasProject={item.contextMenu.onDeleteCanvasProject}
                       />
                     </ContextMenuProvider>
                   </StyledContextMenuContent>

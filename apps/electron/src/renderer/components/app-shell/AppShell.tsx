@@ -41,7 +41,7 @@ import { cn } from "@/lib/utils"
 import { isMac } from "@/lib/platform"
 import { Button } from "@/components/ui/button"
 import { HeaderIconButton } from "@/components/ui/HeaderIconButton"
-import { resolveInheritedFilterParams, type FilterMode } from "./inherited-filter-params"
+import { resolveInheritedFilterParams, withDefaultRemoteProject, type FilterMode } from "./inherited-filter-params"
 import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipTrigger, TooltipContent, DocumentFormattedMarkdownOverlay } from "@craft-agent/ui"
 import {
@@ -1904,12 +1904,14 @@ function AppShellContent({
 
   const [canvasProjects, setCanvasProjects] = React.useState<Array<{ id: string; title: string; updatedAt: string }>>([])
   const [activeCanvasProjectId, setActiveCanvasProjectId] = React.useState('')
+  const [canDeleteCanvasProjects, setCanDeleteCanvasProjects] = React.useState(false)
 
   React.useEffect(() => {
     const handleCanvasProjects = (event: Event) => {
-      const detail = (event as CustomEvent<{ projects?: Array<{ id: string; title: string; updatedAt: string }>; activeProjectId?: string }>).detail
+      const detail = (event as CustomEvent<{ projects?: Array<{ id: string; title: string; updatedAt: string }>; activeProjectId?: string; deletable?: boolean }>).detail
       setCanvasProjects(detail?.projects || [])
       setActiveCanvasProjectId(detail?.activeProjectId || '')
+      setCanDeleteCanvasProjects(detail?.deletable === true)
     }
     window.addEventListener('jonwork:canvas-projects', handleCanvasProjects)
     return () => window.removeEventListener('jonwork:canvas-projects', handleCanvasProjects)
@@ -1919,6 +1921,11 @@ function AppShellContent({
     setRightDockVisible(false)
     window.dispatchEvent(new CustomEvent('jonwork:canvas-project-open', { detail: { projectId } }))
   }, [])
+
+  const handleCanvasProjectDelete = useCallback((projectId: string, title: string) => {
+    if (!window.confirm(t('sidebarMenu.deleteCanvasConfirm', { title }))) return
+    window.dispatchEvent(new CustomEvent('jonwork:canvas-project-delete', { detail: { projectId } }))
+  }, [t])
 
   const handleFlaggedClick = useCallback(() => {
     navigate(routes.view.flagged())
@@ -2231,7 +2238,24 @@ function AppShellContent({
     setSearchQuery('')
 
     // Inherit sole-active filter into the new session when unambiguous.
-    const inherited = resolveInheritedNewSessionParams()
+    const inheritedFilters = resolveInheritedNewSessionParams()
+    const inherited = activeWorkspace.remoteServer
+      ? withDefaultRemoteProject(
+          inheritedFilters,
+          projects.map(project => ({
+            id: project.config.id,
+            name: project.config.name,
+            archivedAt: project.config.archivedAt,
+          })),
+        )
+      : inheritedFilters
+
+    if (activeWorkspace.remoteServer && !inherited?.project) {
+      toast.error(t('projectInfo.newSessionFailed'), {
+        description: t('projectsList.emptyDescription'),
+      })
+      return
+    }
 
     // Delegate to NavigationContext which handles session creation
     navigate(
@@ -2241,7 +2265,7 @@ function AppShellContent({
 
     // Focus the chat input after navigation completes
     setTimeout(() => focusZone('chat', { intent: 'programmatic' }), 50)
-  }, [activeWorkspace, focusZone, navigate, resolveInheritedNewSessionParams])
+  }, [activeWorkspace, focusZone, navigate, projects, resolveInheritedNewSessionParams, t])
 
   // Create a brand new dedicated browser window and focus it.
   // Intentionally unbound: this action should always create a NEW window.
@@ -2637,6 +2661,11 @@ function AppShellContent({
                       variant: activeCanvasProjectId === project.id ? 'default' : 'ghost',
                       compact: true,
                       onClick: () => handleCanvasProjectClick(project.id),
+                      contextMenu: canDeleteCanvasProjects ? {
+                        type: 'canvas',
+                        canvasProjectId: project.id,
+                        onDeleteCanvasProject: () => handleCanvasProjectDelete(project.id, project.title),
+                      } : undefined,
                     })),
                   }]}
                 />

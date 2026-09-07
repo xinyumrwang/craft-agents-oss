@@ -363,6 +363,24 @@ describe('push events', () => {
 // ---------------------------------------------------------------------------
 
 describe('reliable delivery', () => {
+  test('remote clients keep reconnecting after a server deployment shutdown event', () => {
+    const remote = trackClient(new WsRpcClient('wss://remote.example', { mode: 'remote' }))
+    const local = trackClient(new WsRpcClient('ws://127.0.0.1:9000', { mode: 'local' }))
+    const shuttingDown: MessageEnvelope = {
+      id: randomUUID(),
+      type: 'event',
+      channel: 'server:shuttingDown',
+      args: [],
+    }
+
+    ;(remote as any).onMessage(serializeEnvelope(shuttingDown))
+    ;(local as any).onMessage(serializeEnvelope(shuttingDown))
+
+    expect((remote as any).permanentlyClosed).toBe(false)
+    expect((local as any).permanentlyClosed).toBe(true)
+    expect(remote.getConnectionState().lastError?.code).toBe('SERVER_SHUTDOWN')
+  })
+
   test('manual reconnect preserves reconnect identity and replays missed events', async () => {
     let sawDisconnect = false
     const server = trackServer(new WsRpcServer({

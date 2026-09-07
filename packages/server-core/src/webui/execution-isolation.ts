@@ -4,5 +4,5 @@
  * its filesystem, process, network, credential and context boundaries are tested.
  */
 export function rejectUnisolatedAgentExecution(): never {
-  throw new Error('企业代理执行已暂停：尚未具备用户及项目级隔离，不会执行或扣费')
+  throw new Error('多账号代理执行已暂停：未绑定用户及项目级隔离策略，不会执行或扣费')
 }

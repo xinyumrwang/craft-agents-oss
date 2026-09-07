@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "channel": "production",
+  "channel": "internal",
   "accountServerUrl": "https://v2.jonwork.com",
   "allowCustomAccountServer": false,
   "updatesEnabled": true,

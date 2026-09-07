@@ -1671,7 +1671,7 @@
   "time.minutesAgo_many": "{{count}}分前",
   "time.minutesAgo_one": "{{count}}分前",
   "time.minutesAgo_other": "{{count}}分前",
-  "toast.actionFailed": "Action could not be completed",
+  "toast.actionFailed": "操作を完了できませんでした",
   "toast.appWillRestart": "アプリは自動的に再起動します。",
   "toast.authenticationFailed": "認証に失敗しました — クリックして再接続",
   "toast.cannotRemoveActiveWorkspace": "アクティブなWorkspaceは削除できません",

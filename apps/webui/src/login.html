@@ -129,6 +129,10 @@
       font-weight: 500;
     }
 
+    [hidden] {
+      display: none !important;
+    }
+
     .primary-link {
       padding: 11px 12px;
       color: white;
@@ -296,7 +300,7 @@
       <button type="button" id="register-tab" hidden>注册</button>
     </div>
 
-    <a class="primary-link" id="erp-login" href="/api/auth/sso/start" hidden>使用 ERPNext 企业账号登录</a>
+    <a class="primary-link" id="erp-login" href="/api/auth/sso/start" hidden>使用邮箱验证码登录</a>
     <form id="login-form" hidden>
       <div class="field">
         <label for="username">用户名</label>
@@ -311,7 +315,7 @@
 
     <div id="error" class="error"></div>
     <a class="secondary-link" href="/downloads/Jonwork-Setup-x64.exe">下载 Windows 客户端</a>
-    <p class="subtitle" id="enrollment-note">账号开通或密码重置，请联系企业管理员。</p>
+    <p class="subtitle" id="enrollment-note">首次验证会自动创建账号，无需设置密码。</p>
   </div>
 
   <script>
@@ -331,7 +335,7 @@
       .then(policy => {
         if (policy?.sso === true) {
           document.getElementById('erp-login').hidden = false;
-          subtitle.textContent = '账号、权限和额度由 ERPNext 统一管理';
+          subtitle.textContent = '邮箱是唯一账号标识，验证码由企业邮箱发送';
         } else {
           form.hidden = false;
           document.querySelector('.tabs').hidden = false;
