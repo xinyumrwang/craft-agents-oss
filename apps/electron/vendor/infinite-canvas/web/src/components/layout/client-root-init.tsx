@@ -4,6 +4,7 @@ import { App } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { createModelChannel, useConfigStore } from "@/stores/use-config-store";
+import { applyManagedModelConfig, isManagedCanvas } from "@/lib/managed-canvas";
 import { usePromptSourceScheduler } from "@/hooks/use-prompt-source-scheduler";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
@@ -15,6 +16,16 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
 
     usePromptSourceScheduler();
+
+    useEffect(() => {
+        if (!isManagedCanvas) return;
+        const receive = (event: MessageEvent) => {
+            if (event.source !== window.parent || event.data?.source !== "jonwork-infinite-canvas" || event.data.type !== "managed-config") return;
+            applyManagedModelConfig(event.data.providers, event.data.defaults);
+        };
+        window.addEventListener("message", receive);
+        return () => window.removeEventListener("message", receive);
+    }, []);
 
     useEffect(() => {
         if (handledConfigParams.current) return;

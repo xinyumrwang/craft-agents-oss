@@ -29,7 +29,7 @@ import {
   FolderKanban,
   Files,
   PanelRightOpen,
-  Shapes,
+  MousePointer2,
   PanelsTopLeft,
 } from "lucide-react"
 // SessionStatusIcons no longer used - icons come from dynamic sessionStatuses
@@ -1895,37 +1895,13 @@ function AppShellContent({
 
   const handleCanvasClick = useCallback(() => {
     setRightDockVisible(false)
+    if (isCanvasView) window.dispatchEvent(new CustomEvent('jonwork:canvas-home'))
     navigate(routes.view.canvas())
-  }, [])
+  }, [isCanvasView])
 
   const handlePagesClick = useCallback(() => {
     navigate(routes.view.pages())
   }, [])
-
-  const [canvasProjects, setCanvasProjects] = React.useState<Array<{ id: string; title: string; updatedAt: string }>>([])
-  const [activeCanvasProjectId, setActiveCanvasProjectId] = React.useState('')
-  const [canDeleteCanvasProjects, setCanDeleteCanvasProjects] = React.useState(false)
-
-  React.useEffect(() => {
-    const handleCanvasProjects = (event: Event) => {
-      const detail = (event as CustomEvent<{ projects?: Array<{ id: string; title: string; updatedAt: string }>; activeProjectId?: string; deletable?: boolean }>).detail
-      setCanvasProjects(detail?.projects || [])
-      setActiveCanvasProjectId(detail?.activeProjectId || '')
-      setCanDeleteCanvasProjects(detail?.deletable === true)
-    }
-    window.addEventListener('jonwork:canvas-projects', handleCanvasProjects)
-    return () => window.removeEventListener('jonwork:canvas-projects', handleCanvasProjects)
-  }, [])
-
-  const handleCanvasProjectClick = useCallback((projectId: string) => {
-    setRightDockVisible(false)
-    window.dispatchEvent(new CustomEvent('jonwork:canvas-project-open', { detail: { projectId } }))
-  }, [])
-
-  const handleCanvasProjectDelete = useCallback((projectId: string, title: string) => {
-    if (!window.confirm(t('sidebarMenu.deleteCanvasConfirm', { title }))) return
-    window.dispatchEvent(new CustomEvent('jonwork:canvas-project-delete', { detail: { projectId } }))
-  }, [t])
 
   const handleFlaggedClick = useCallback(() => {
     navigate(routes.view.flagged())
@@ -2648,25 +2624,9 @@ function AppShellContent({
                   links={[{
                     id: 'nav:canvas',
                     title: '无限画布',
-                    icon: Shapes,
+                    icon: MousePointer2,
                     variant: 'ghost',
                     onClick: handleCanvasClick,
-                    expandable: true,
-                    expanded: isCanvasView,
-                    onToggle: handleCanvasClick,
-                    items: canvasProjects.map((project) => ({
-                      id: `nav:canvas:${project.id}`,
-                      title: project.title,
-                      icon: Shapes,
-                      variant: activeCanvasProjectId === project.id ? 'default' : 'ghost',
-                      compact: true,
-                      onClick: () => handleCanvasProjectClick(project.id),
-                      contextMenu: canDeleteCanvasProjects ? {
-                        type: 'canvas',
-                        canvasProjectId: project.id,
-                        onDeleteCanvasProject: () => handleCanvasProjectDelete(project.id, project.title),
-                      } : undefined,
-                    })),
                   }]}
                 />
 

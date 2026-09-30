@@ -6,7 +6,7 @@ import { join, isAbsolute, resolve } from 'node:path'
 import { AccountSkillLibrary, GLOBAL_AGENT_SKILLS_DIR, assertSkillPath } from '@craft-agent/shared/skills'
 import { CanvasStore } from '@craft-agent/session-tools-core/canvas-store'
 import { CANVAS_WORKFLOWS, canvasWorkflowFromOps } from '@craft-agent/session-tools-core/canvas-workflows'
-import { advanceCanvasModel, stepCanvasProvider, canvasWorkflowModel, readCanvasProviderArtifacts, rejectUnisolatedAgentExecution } from '@craft-agent/server-core/webui'
+import { advanceCanvasModel, stepCanvasProvider, canvasProviderConfig, readCanvasProviderArtifacts, rejectUnisolatedAgentExecution } from '@craft-agent/server-core/webui'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { loadTaskSpec, parseTaskYaml, serializeTaskYaml } from '@craft-agent/shared/tasks'
@@ -16,6 +16,34 @@ function requireCanvasSkill(workflowId: unknown, skills: string[]): string {
   const slug = `jonwork-${workflowId}`
   if (!Array.isArray(skills) || !skills.includes(slug)) throw new Error('ERP 未授权此业务技能')
   return slug
+}
+
+type CanvasCapability = 'image' | 'video' | 'text' | 'audio'
+function inferredCanvasCapability(model: string): CanvasCapability {
+  const value = model.toLowerCase()
+  if (['video', 'sora', 'veo', 'kling', 'wan', 'hailuo'].some(keyword => value.includes(keyword))) return 'video'
+  if (['audio', 'tts', 'speech', 'voice', 'music', 'sound'].some(keyword => value.includes(keyword))) return 'audio'
+  if (['seedream', 'gpt-image', 'image', 'dall-e', 'dalle', 'imagen', 'flux', 'sdxl'].some(keyword => value.includes(keyword))) return 'image'
+  return 'text'
+}
+
+function canvasPolicyConfig(policy: Awaited<ReturnType<ErpControlRuntime['policy']>>) {
+  const providers = policy.models.filter(model => model !== 'meshy/image-to-3d').map(model => ({ model, capability: policy.model_capabilities?.[model] || inferredCanvasCapability(model), apiFormat: 'openai' as const }))
+  const defaults = Object.fromEntries((['image', 'video', 'text', 'audio'] as const).map(capability => [capability,
+    policy.canvas_defaults?.[capability] || providers.find(item => item.capability === capability)?.model || '',
+  ]))
+  return { providers, defaults, policyVersion: policy.policy_version }
+}
+
+function canvasWorkflowProvider(policy: Awaited<ReturnType<ErpControlRuntime['policy']>>, workflowId: string) {
+  const workflow = CANVAS_WORKFLOWS.find(item => item.id === workflowId)
+  if (!workflow) throw new Error('未知画布业务技能')
+  if (workflow.mode === 'model') return { model: 'meshy/image-to-3d' as const, mode: 'model' as const }
+  const mode = workflow.mode as 'image' | 'text'
+  const model = policy.canvas_defaults?.[mode]
+    || policy.models.find(item => (policy.model_capabilities?.[item] || inferredCanvasCapability(item)) === mode)
+  if (!model) throw new Error(`ERP 未配置画布${mode === 'image' ? '图像' : '文本'}模型`)
+  return { model, mode }
 }
 
 // Managed instances expose business operations, not the desktop's server-admin
@@ -42,8 +70,8 @@ const MANAGED_CHANNELS = new Set<string>([
   RPC_CHANNELS.toolIcons.GET_MAPPINGS, RPC_CHANNELS.logo.GET_URL,
 ])
 const MANAGED_COMMANDS = new Set(['flag','unflag','archive','unarchive','rename','setSessionStatus',
-  'markRead','markUnread','setActiveViewing','setThinkingLevel','setSources','setLabels',
-  'setKanbanColumn','setConnection','setProjectId','setPendingPlanExecution','markCompactionComplete',
+  'markRead','markUnread','setActiveViewing','setSources','setLabels',
+  'setKanbanColumn','setProjectId','setPendingPlanExecution','markCompactionComplete',
   'markPendingPlanExecutionDispatched','clearPendingPlanExecution','addAnnotation','removeAnnotation','updateAnnotation'])
 const MANAGED_CANVAS_TOOLS = new Set(['get_infinite_canvas_state','save_infinite_canvas_state','bind_infinite_canvas_session',
   'get_infinite_canvas_updates','ack_infinite_canvas_update','heartbeat_infinite_canvas_update',
@@ -240,7 +268,10 @@ export class AccountScopedRpcServer implements RpcServer {
         }
         if (channel === RPC_CHANNELS.canvas.CALL_TOOL) {
           if (args[0] !== account.workspaceId) throw new Error('无权访问该画布工作区')
-          if (args[1] === 'get_infinite_canvas_capabilities') return { content: [], structuredContent: { managed: true }, isError: false }
+          if (args[1] === 'get_infinite_canvas_capabilities') {
+            const freshPolicy = await this.control.policy(account.id, true)
+            return { content: [], structuredContent: { managed: true, ...canvasPolicyConfig(freshPolicy) }, isError: false }
+          }
           if (!MANAGED_CANVAS_TOOLS.has(args[1])) throw new Error('中台模式暂未开放未接入服务端计费的画布生成操作')
           const canvasProject = args[1] === 'save_infinite_canvas_state' ? args[2]?.snapshot?.projectId : args[2]?.projectId
           if (typeof canvasProject !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(canvasProject)) throw new Error('必须指定当前画布项目，禁止回退到最近打开的画布')
@@ -261,7 +292,7 @@ export class AccountScopedRpcServer implements RpcServer {
           }
           if (args[1] === 'run_infinite_canvas_workflow') {
             requireCanvasSkill(args[2]?.workflow?.id, policy.skills)
-            const model = canvasWorkflowModel(args[2]?.workflow?.id)
+            const model = canvasWorkflowProvider(policy, args[2]?.workflow?.id).model
             if (!policy.models.includes(model)) throw new Error('ERP 未授权此业务的服务端模型')
           }
           if (args[1] === 'advance_infinite_canvas_provider') {
@@ -271,11 +302,13 @@ export class AccountScopedRpcServer implements RpcServer {
             if (source.projectId !== canvasProject) throw new Error('原任务与画布不属于同一业务项目')
             const workflowId = canvasWorkflowFromOps(entry.ops)?.id
             const skill = requireCanvasSkill(workflowId, policy.skills)
-            const model = canvasWorkflowModel(workflowId!)
+            const provider = canvasWorkflowProvider(policy, workflowId!)
+            const model = provider.model
             if (!policy.models.includes(model)) throw new Error('ERP 未授权此业务的服务端模型')
             const key = 'canvas-' + createHash('sha256').update(JSON.stringify([account.id, canvasProject, entry.id, entry.revision, input.nodeId])).digest('hex')
             const billing = this.control.providerTask({ workspaceId: account.workspaceId, model, skills: [skill], sources: [] }, key)
-            const result = await stepCanvasProvider(store, { revision: entry.revision, deliveryToken: entry.deliveryToken!, projectId: canvasProject, nodeId: input.nodeId, images: input.images }, billing)
+            if (provider.mode === 'model') throw new Error('3D任务必须使用专用供应商通道')
+            const result = await stepCanvasProvider(store, { revision: entry.revision, deliveryToken: entry.deliveryToken!, projectId: canvasProject, nodeId: input.nodeId, images: input.images }, billing, canvasProviderConfig(provider.mode, provider.model))
             return { content: [], structuredContent: result, isError: false }
           }
           if (args[1] === 'ack_infinite_canvas_update' && args[2]?.error === undefined) {

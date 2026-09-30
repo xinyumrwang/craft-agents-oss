@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { isManagedCanvas } from '@/lib/managed-canvas';
+import { applyManagedModelConfig, isManagedCanvas } from '@/lib/managed-canvas';
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { App, Button } from "antd";
 import { Download, FileUp, Plus } from "lucide-react";
@@ -74,6 +74,7 @@ export default function CanvasPage() {
             if (event.source !== window.parent || event.data?.source !== 'jonwork-infinite-canvas' || event.data.type !== 'managed-open') return;
             const snapshot = event.data.snapshot;
             if (!snapshot || typeof snapshot.projectId !== 'string' || !Array.isArray(snapshot.nodes)) return;
+            applyManagedModelConfig(event.data.providers, event.data.defaults);
             const now = new Date().toISOString();
             useCanvasStore.getState().replaceProjects([{ id: snapshot.projectId, title: snapshot.title || '业务画布', createdAt: now, updatedAt: now, nodes: snapshot.nodes, connections: snapshot.connections || [], viewport: snapshot.viewport || { x: 0, y: 0, k: 1 }, chatSessions: [], activeChatId: null, backgroundMode: 'lines', showImageInfo: false }]);
             navigate(`/canvas/${encodeURIComponent(snapshot.projectId)}?jonwork=1`);

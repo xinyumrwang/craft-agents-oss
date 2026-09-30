@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowRight, CheckCircle2, FolderOpen, Loader2, MessageSquarePlus, MousePointer2, Plus, Sparkles, WandSparkles } from 'lucide-react'
+import { Loader2, MoreHorizontal, MousePointer2, Pencil, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAppShellContext } from '@/context/AppShellContext'
 import { useTheme } from '@/context/ThemeContext'
@@ -7,13 +7,14 @@ import { useNavigation } from '@/contexts/NavigationContext'
 import { navigate, routes } from '@/lib/navigate'
 import { CanvasResultReview, type CanvasResult } from '@/components/canvas/CanvasResultReview'
 import { takeCanvasWorkflow } from '@/components/canvas/canvas-launch'
-import { CreateProjectDialog } from '@/components/projects/CreateProjectDialog'
 import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { CanvasWorkflowRequest } from '@craft-agent/session-tools-core/canvas-workflows'
 
 const SOURCE = 'jonwork-infinite-canvas'
+const DEFAULT_CANVAS_PROJECT_NAME = '未命名画布'
 const CanvasModelPreview = lazy(() => import('@/components/canvas/CanvasModelPreview'))
+
+type BusinessCanvas = { id: string; slug: string; name: string; updatedAt: number; nodeCount?: number }
 
 type CanvasMessage = {
   source: typeof SOURCE
@@ -65,12 +66,11 @@ export default function CanvasPage() {
   const [modelPreview, setModelPreview] = useState<string | null>(null)
   const [managed, setManaged] = useState<boolean | null>(null)
   const [setupError, setSetupError] = useState('')
-  const [businessProjects, setBusinessProjects] = useState<Array<{ id: string; name: string }>>([])
+  const [businessProjects, setBusinessProjects] = useState<BusinessCanvas[]>([])
   const [businessProjectId, setBusinessProjectId] = useState('')
-  const [createProjectOpen, setCreateProjectOpen] = useState(false)
   const [creatingProject, setCreatingProject] = useState(false)
-  const [creatingSession, setCreatingSession] = useState(false)
   const bootstrap = useRef<Record<string, unknown> | null>(null)
+  const managedModelConfig = useRef<{ providers: unknown[]; defaults?: unknown; policyVersion?: unknown }>({ providers: [] })
 
   useEffect(() => {
     let disposed = false
@@ -78,21 +78,44 @@ export default function CanvasPage() {
     if (activeWorkspaceId) void (async () => {
       const capabilities = structured(await window.electronAPI.callCanvasTool(activeWorkspaceId, 'get_infinite_canvas_capabilities', {}))
       if (disposed) return
-      setManaged(capabilities.managed === true)
+      managedModelConfig.current = {
+        providers: Array.isArray(capabilities.providers) ? capabilities.providers : [],
+        defaults: capabilities.defaults,
+        policyVersion: capabilities.policyVersion,
+      }
       if (capabilities.managed) {
-        const projects = await window.electronAPI.getProjects(activeWorkspaceId) as Array<{ config: { id: string; name: string; archivedAt?: string } }>
-        if (!disposed) setBusinessProjects(projects.filter(p => !p.config.archivedAt).map(p => ({ id: p.config.id, name: p.config.name })))
+        const projects = await window.electronAPI.getProjects(activeWorkspaceId) as Array<{ config: { id: string; slug: string; name: string; updatedAt: number; archivedAt?: number } }>
+        const availableProjects: BusinessCanvas[] = projects
+          .filter(project => !project.config.archivedAt)
+          .sort((left, right) => right.config.updatedAt - left.config.updatedAt)
+          .filter(project => project.config.name !== '快速会话')
+          .map(project => ({ id: project.config.id, slug: project.config.slug, name: project.config.name, updatedAt: project.config.updatedAt }))
+        const withCounts = await Promise.all(availableProjects.map(async project => {
+          try {
+            const state = structured(await window.electronAPI.callCanvasTool(activeWorkspaceId, 'get_infinite_canvas_state', { projectId: project.id }))
+            return { ...project, nodeCount: Array.isArray(state.state?.snapshot?.nodes) ? state.state.snapshot.nodes.length : 0 }
+          } catch {
+            return project
+          }
+        }))
+        if (!disposed) {
+          setBusinessProjects(withCounts)
+          setManaged(true)
+        }
+      } else if (!disposed) {
+        setManaged(false)
       }
     })().catch(error => { if (!disposed) setSetupError(error instanceof Error ? error.message : '无法读取企业画布配置') })
     return () => { disposed = true }
   }, [activeWorkspaceId])
 
-  const openBusinessProject = useCallback(async (id: string) => {
+  const openBusinessProject = useCallback(async (id: string, name?: string) => {
     if (!activeWorkspaceId || delivery.current || retryReceipt) return
     await saveQueue.current
     const state = structured(await window.electronAPI.callCanvasTool(activeWorkspaceId, 'get_infinite_canvas_state', { projectId: id }))
-    bootstrap.current = state.state?.snapshot || { projectId: id, title: businessProjects.find(p => p.id === id)?.name || '业务画布', nodes: [], connections: [], viewport: { x: 0, y: 0, k: 1 } }
+    bootstrap.current = state.state?.snapshot || { projectId: id, title: name || businessProjects.find(p => p.id === id)?.name || '业务画布', nodes: [], connections: [], viewport: { x: 0, y: 0, k: 1 } }
     activeProjectId.current = id; setResults([]); setBlocked(null); setBusinessProjectId(id); setLoaded(false)
+    window.localStorage.setItem(`jonwork:canvas:last-project:${activeWorkspaceId}`, id)
   }, [activeWorkspaceId, businessProjects, retryReceipt])
 
   const createBusinessProject = async (name: string) => {
@@ -100,10 +123,9 @@ export default function CanvasPage() {
     setCreatingProject(true)
     try {
       const project = await window.electronAPI.createProject(activeWorkspaceId, { name })
-      setBusinessProjects(previous => [...previous, { id: project.id, name: project.name }])
-      setCreateProjectOpen(false)
-      await openBusinessProject(project.id)
-      toast.success('项目已创建，可以开始在画布上工作了')
+      setBusinessProjects(previous => [{ id: project.id, slug: project.slug, name: project.name, updatedAt: Date.now(), nodeCount: 0 }, ...previous])
+      await openBusinessProject(project.id, project.name)
+      toast.success('画布已创建，可以开始创作了')
     } catch (error) {
       toast.error('新建项目失败', { description: error instanceof Error ? error.message : String(error) })
     } finally {
@@ -111,30 +133,27 @@ export default function CanvasPage() {
     }
   }
 
-  const startDirectSession = async () => {
-    if (!activeWorkspaceId || creatingSession || progress || retryReceipt) return
-    setCreatingSession(true)
+  const renameBusinessProject = async (project: BusinessCanvas) => {
+    if (!activeWorkspaceId) return
+    const name = window.prompt('请输入新的画布名称', project.name)?.trim()
+    if (!name || name === project.name) return
     try {
-      // Managed execution must always have a server-verified project boundary.
-      // "Direct" means no manual selection: keep the isolation guarantee by
-      // reusing (or lazily creating) a dedicated quick-session project.
-      let targetProject = businessProjectId
-        ? businessProjects.find(project => project.id === businessProjectId)
-        : businessProjects.find(project => project.name === '快速会话')
-      if (!targetProject) {
-        const project = await window.electronAPI.createProject(activeWorkspaceId, {
-          name: '快速会话',
-          description: '无需手动选择项目的临时讨论与快速任务',
-        })
-        targetProject = { id: project.id, name: project.name }
-        setBusinessProjects(previous => previous.some(item => item.id === project.id) ? previous : [...previous, targetProject!])
-      }
-      const session = await window.electronAPI.createSession(activeWorkspaceId, { projectId: targetProject.id })
-      navigateToSession(session.id)
+      const updated = await window.electronAPI.updateProject(activeWorkspaceId, project.slug, { name })
+      setBusinessProjects(previous => previous.map(item => item.id === project.id ? { ...item, name: updated.name, updatedAt: updated.updatedAt } : item))
+      toast.success('画布已重命名')
     } catch (error) {
-      toast.error('无法创建会话', { description: error instanceof Error ? error.message : String(error) })
-    } finally {
-      setCreatingSession(false)
+      toast.error('重命名失败', { description: error instanceof Error ? error.message : String(error) })
+    }
+  }
+
+  const deleteBusinessProject = async (project: BusinessCanvas) => {
+    if (!activeWorkspaceId || !window.confirm(`确定删除画布“${project.name}”吗？历史任务会保留，但画布将不再显示。`)) return
+    try {
+      await window.electronAPI.updateProject(activeWorkspaceId, project.slug, { archivedAt: Date.now() })
+      setBusinessProjects(previous => previous.filter(item => item.id !== project.id))
+      toast.success('画布已删除')
+    } catch (error) {
+      toast.error('删除画布失败', { description: error instanceof Error ? error.message : String(error) })
     }
   }
 
@@ -152,6 +171,17 @@ export default function CanvasPage() {
   }, [activeWorkspaceId])
 
   useEffect(() => {
+    if (!managed) return
+    window.dispatchEvent(new CustomEvent('jonwork:canvas-projects', {
+      detail: {
+        projects: businessProjects.map(project => ({ id: project.id, title: project.name, updatedAt: new Date(project.updatedAt).toISOString() })),
+        activeProjectId: businessProjectId,
+        deletable: false,
+      },
+    }))
+  }, [businessProjectId, businessProjects, managed])
+
+  useEffect(() => {
     const handleMessage = async (event: MessageEvent) => {
       if (event.source !== iframeRef.current?.contentWindow) return
       const message = event.data as CanvasMessage
@@ -160,10 +190,10 @@ export default function CanvasPage() {
       try {
         if (!activeWorkspaceId) throw new Error('当前没有活动工作区')
         if (message.type === 'managed-ready') {
-          if (managed && bootstrap.current) (event.source as Window).postMessage({ source: SOURCE, type: 'managed-open', snapshot: bootstrap.current }, '*')
+          if (managed && bootstrap.current) (event.source as Window).postMessage({ source: SOURCE, type: 'managed-open', snapshot: bootstrap.current, ...managedModelConfig.current }, '*')
           return
         }
-        if (message.type === 'managed-new-project') { toast.info('请使用画布上方的新建业务项目按钮。'); return }
+        if (message.type === 'managed-new-project') { toast.info('请返回“我的画布”后新建画布。'); return }
         if (message.type === 'provider-generation') {
           const current = delivery.current, target = event.source as Window
           try {
@@ -328,6 +358,23 @@ export default function CanvasPage() {
   }, [managed, openBusinessProject])
 
   useEffect(() => {
+    const showCanvasHome = () => {
+      if (delivery.current || retryReceipt || blocked) {
+        toast.error('当前画布仍有执行中或待处理任务，暂不能退出。')
+        return
+      }
+      bootstrap.current = null
+      activeProjectId.current = ''
+      setBusinessProjectId('')
+      setLoaded(false)
+      setResults([])
+      setSelectedRevision(null)
+    }
+    window.addEventListener('jonwork:canvas-home', showCanvasHome)
+    return () => window.removeEventListener('jonwork:canvas-home', showCanvasHome)
+  }, [blocked, retryReceipt])
+
+  useEffect(() => {
     const handleCanvasProjectDelete = (event: Event) => {
       const projectId = (event as CustomEvent<{ projectId?: string }>).detail?.projectId
       if (!projectId || !activeWorkspaceId) return
@@ -350,6 +397,25 @@ export default function CanvasPage() {
     if (!loaded) return
     iframeRef.current?.contentWindow?.postMessage({ source: SOURCE, type: 'set-theme', theme: resolvedMode }, '*')
   }, [loaded, resolvedMode])
+
+  useEffect(() => {
+    if (!activeWorkspaceId || !managed || !loaded) return
+    let disposed = false
+    const syncManagedModels = async () => {
+      try {
+        const capabilities = structured(await window.electronAPI.callCanvasTool(activeWorkspaceId, 'get_infinite_canvas_capabilities', {}))
+        if (disposed || capabilities.managed !== true) return
+        const next = { providers: Array.isArray(capabilities.providers) ? capabilities.providers : [], defaults: capabilities.defaults, policyVersion: capabilities.policyVersion }
+        if (JSON.stringify(next) === JSON.stringify(managedModelConfig.current)) return
+        managedModelConfig.current = next
+        iframeRef.current?.contentWindow?.postMessage({ source: SOURCE, type: 'managed-config', ...next }, '*')
+      } catch (error) {
+        console.error('Failed to refresh ERP canvas model configuration', error)
+      }
+    }
+    const interval = window.setInterval(syncManagedModels, 15_000)
+    return () => { disposed = true; window.clearInterval(interval) }
+  }, [activeWorkspaceId, loaded, managed])
 
   useEffect(() => {
     if (!activeWorkspaceId || !loaded) return
@@ -396,28 +462,16 @@ export default function CanvasPage() {
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-muted/20">
       {setupError && <div role="alert" className="p-4">{setupError}</div>}
-      {managed && <div className="flex min-h-16 shrink-0 items-center gap-3 border-b bg-background/95 px-4 py-3 shadow-xs backdrop-blur">
-        <div className="mr-2 hidden min-w-0 lg:block">
-          <div className="flex items-center gap-2 text-sm font-semibold"><Sparkles className="size-4 text-primary" />创意画布</div>
-          <p className="mt-0.5 text-xs text-muted-foreground">选择项目沉淀资产，或免选择直接开始</p>
-        </div>
-        <Select value={businessProjectId} disabled={Boolean(progress || retryReceipt)} onValueChange={id => void openBusinessProject(id).catch(error => toast.error(error instanceof Error ? error.message : String(error)))}>
-          <SelectTrigger aria-label="服务器业务项目" className="h-10 w-[min(360px,34vw)] rounded-xl bg-muted/40">
-            <SelectValue placeholder="选择一个项目开始创作" />
-          </SelectTrigger>
-          <SelectContent className="max-h-80">
-            {businessProjects.map(project => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Button variant="outline" className="h-10 rounded-xl" disabled={Boolean(progress || retryReceipt || creatingProject)} onClick={() => setCreateProjectOpen(true)}>
-          <Plus />新建项目
-        </Button>
-        <div className="flex-1" />
-        {businessProjectId && <div className="hidden items-center gap-1.5 text-xs text-muted-foreground xl:flex"><CheckCircle2 className="size-3.5 text-emerald-500" />自动保存 · 成果生成后可审查</div>}
-        <Button variant="secondary" className="h-10 rounded-xl" disabled={Boolean(progress || retryReceipt || creatingSession)} onClick={() => void startDirectSession()}>
-          {creatingSession ? <Loader2 className="animate-spin" /> : <MessageSquarePlus />}直接会话
-        </Button>
-      </div>}
+      {managed === null && !setupError && <div className="flex min-h-0 flex-1 items-center justify-center bg-background text-muted-foreground"><Loader2 className="mr-2 size-4 animate-spin" />正在读取画布…</div>}
+      {managed && !businessProjectId && !setupError && <CanvasHome
+        projects={businessProjects}
+        creating={creatingProject}
+        onOpen={id => void openBusinessProject(id).catch(error => toast.error(error instanceof Error ? error.message : String(error)))}
+        onCreate={() => void createBusinessProject(DEFAULT_CANVAS_PROJECT_NAME)}
+        onRename={project => void renameBusinessProject(project)}
+        onDelete={project => void deleteBusinessProject(project)}
+      />}
+      {(managed === false || (managed === true && Boolean(businessProjectId))) && <>
       {modelPreview && <Suspense fallback={<div role="status">正在载入3D预览…</div>}><CanvasModelPreview path={modelPreview} onClose={() => setModelPreview(null)} /></Suspense>}
       {progress && !blocked && <div role="status" className="border-b p-3 text-sm text-muted-foreground">{progress}</div>}
       {result && <CanvasResultReview key={`${activeWorkspaceId}:${result.projectId}`} results={results} selected={result} locked={Boolean(progress || retryReceipt || blocked)} onSelect={setSelectedRevision} onOpen={path => path.endsWith('.glb') ? setModelPreview(path) : onOpenFile(path)} onFolder={path => window.electronAPI.showInFolder(path)} onTask={navigateToSession}
@@ -463,56 +517,7 @@ export default function CanvasPage() {
         }}>已核对，跳过此项</button>
       </div>}
       <div className="relative m-3 min-h-0 flex-1 overflow-hidden rounded-2xl border bg-background shadow-xs">
-        {!loaded && managed && !businessProjectId && !setupError && <div className="absolute inset-0 z-10 overflow-auto bg-background">
-          <div className="mx-auto flex min-h-full w-full max-w-5xl items-center px-6 py-10">
-            <div className="w-full">
-              <div className="mb-8 max-w-2xl">
-                <div className="mb-4 grid size-12 place-items-center rounded-2xl bg-primary/10 text-primary"><WandSparkles className="size-6" /></div>
-                <h1 className="text-2xl font-semibold tracking-tight">从这里开始你的第一个设计任务</h1>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">画布适合整理素材、生成方案和连续修改；如果只是想问一个问题，也可以免选项目直接会话。</p>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <section className="rounded-2xl border bg-card p-5 shadow-xs">
-                  <div className="flex items-start gap-3">
-                    <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><FolderOpen /></div>
-                    <div><h2 className="font-semibold">进入项目画布</h2><p className="mt-1 text-sm text-muted-foreground">素材、会话和成果都会归档到项目中。</p></div>
-                  </div>
-                  <div className="mt-5 space-y-2">
-                    {businessProjects.slice(0, 5).map(project => (
-                      <button key={project.id} type="button" className="group flex w-full items-center gap-3 rounded-xl border border-transparent bg-muted/45 px-3 py-2.5 text-left text-sm transition hover:border-primary/20 hover:bg-primary/5" onClick={() => void openBusinessProject(project.id).catch(error => toast.error(error instanceof Error ? error.message : String(error)))}>
-                        <span className="grid size-7 place-items-center rounded-lg bg-background font-medium text-muted-foreground">{project.name.trim().charAt(0).toUpperCase() || '项'}</span>
-                        <span className="min-w-0 flex-1 truncate font-medium">{project.name}</span>
-                        <ArrowRight className="size-4 text-muted-foreground transition group-hover:translate-x-0.5 group-hover:text-primary" />
-                      </button>
-                    ))}
-                    {businessProjects.length === 0 && <p className="rounded-xl border border-dashed px-3 py-4 text-center text-sm text-muted-foreground">还没有项目，创建一个即可开始。</p>}
-                  </div>
-                  <Button className="mt-4 w-full rounded-xl" onClick={() => setCreateProjectOpen(true)}><Plus />新建项目画布</Button>
-                </section>
-
-                <section className="flex flex-col rounded-2xl border bg-card p-5 shadow-xs">
-                  <div className="flex items-start gap-3">
-                    <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-foreground/5"><MessageSquarePlus /></div>
-                    <div><h2 className="font-semibold">直接开始会话</h2><p className="mt-1 text-sm text-muted-foreground">无需手动选项目，系统会自动归入“快速会话”，适合咨询和临时任务。</p></div>
-                  </div>
-                  <div className="my-5 space-y-3 text-sm text-muted-foreground">
-                    <div className="flex gap-3"><MousePointer2 className="mt-0.5 size-4 shrink-0 text-foreground" /><span>输入你的目标，AI 会帮你拆解下一步</span></div>
-                    <div className="flex gap-3"><Sparkles className="mt-0.5 size-4 shrink-0 text-foreground" /><span>随时可以回到画布继续整理和生成</span></div>
-                  </div>
-                  <Button variant="secondary" className="mt-auto w-full rounded-xl" disabled={creatingSession} onClick={() => void startDirectSession()}>
-                    {creatingSession ? <Loader2 className="animate-spin" /> : <MessageSquarePlus />}开启新会话
-                  </Button>
-                </section>
-              </div>
-
-              <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl border border-dashed px-5 py-4 text-xs text-muted-foreground">
-                <span className="font-medium text-foreground">新手 3 步</span><span>1. 选择或创建项目</span><span>2. 拖入素材并描述需求</span><span>3. 审查结果后继续修改</span>
-              </div>
-            </div>
-          </div>
-        </div>}
-        {!loaded && !(managed && !businessProjectId && !setupError) && <div className="absolute inset-0 z-10 flex items-center justify-center bg-background text-muted-foreground">{setupError ? '画布配置读取失败，请重开页面后重试。' : <><Loader2 className="mr-2 h-4 w-4 animate-spin" />正在载入画布…</>}</div>}
+        {!loaded && <div className="absolute inset-0 z-10 flex items-center justify-center bg-background text-muted-foreground">{setupError ? '画布配置读取失败，请重开页面后重试。' : <><Loader2 className="mr-2 h-4 w-4 animate-spin" />正在载入画布…</>}</div>}
         {managed !== null && (!managed || businessProjectId) && <iframe
           key={`${activeWorkspaceId}:${businessProjectId}`}
           ref={iframeRef}
@@ -523,7 +528,72 @@ export default function CanvasPage() {
           sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads allow-pointer-lock"
         />}
       </div>
-      <CreateProjectDialog open={createProjectOpen} onCancel={() => !creatingProject && setCreateProjectOpen(false)} onSubmit={name => void createBusinessProject(name)} />
+      </>}
     </div>
   )
+}
+
+function CanvasHome({ projects, creating, onOpen, onCreate, onRename, onDelete }: {
+  projects: BusinessCanvas[]
+  creating: boolean
+  onOpen: (id: string) => void
+  onCreate: () => void
+  onRename: (project: BusinessCanvas) => void
+  onDelete: (project: BusinessCanvas) => void
+}) {
+  const [menuProjectId, setMenuProjectId] = useState('')
+  useEffect(() => {
+    if (!menuProjectId) return
+    const close = () => setMenuProjectId('')
+    window.addEventListener('pointerdown', close)
+    return () => window.removeEventListener('pointerdown', close)
+  }, [menuProjectId])
+
+  return <div className="min-h-0 flex-1 overflow-auto bg-background">
+    <main className="mx-auto w-full max-w-[1480px] px-8 py-16 lg:px-16 xl:px-24">
+      <div className="flex items-end justify-between gap-8">
+        <div>
+          <div className="mb-5 grid size-16 place-items-center rounded-3xl bg-neutral-950 text-white shadow-sm dark:bg-white dark:text-neutral-950">
+            <MousePointer2 className="size-8" strokeWidth={1.8} />
+          </div>
+          <h1 className="text-4xl font-semibold tracking-tight">我的画布</h1>
+          <p className="mt-3 text-base text-muted-foreground">选择已有画布继续设计，或新建一个工作空间整理设计创意。</p>
+        </div>
+        <Button className="h-14 rounded-2xl bg-neutral-950 px-7 text-base text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-200" disabled={creating} onClick={onCreate}>
+          {creating ? <Loader2 className="animate-spin" /> : <Plus />}新建画布
+        </Button>
+      </div>
+
+      <div className="mt-14 grid grid-cols-1 gap-7 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          {projects.map(project => <article key={project.id} role="button" tabIndex={0} className="group overflow-hidden rounded-[28px] border bg-card text-left shadow-xs transition hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-md" onClick={() => onOpen(project.id)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') onOpen(project.id) }}>
+            <div className="relative h-52 overflow-hidden bg-neutral-300 dark:bg-neutral-700">
+              <div className="absolute inset-y-0 left-[12%] right-[12%] bg-neutral-500/55 dark:bg-neutral-500/70" />
+              <div className="absolute left-[19%] top-[16%] h-[28%] w-[25%] rounded-sm bg-neutral-50 shadow-sm"><span className="absolute left-3 right-3 top-3 h-px bg-neutral-300" /><span className="absolute left-3 right-6 top-6 h-px bg-neutral-300" /></div>
+              <div className="absolute bottom-[15%] left-[18%] h-[30%] w-[27%] rounded-sm bg-neutral-900 shadow-sm"><span className="absolute left-3 right-3 top-4 h-px bg-neutral-500" /><span className="absolute left-3 right-5 top-7 h-px bg-neutral-600" /></div>
+              <div className="absolute bottom-[20%] left-[48%] h-[25%] w-[24%] rounded-sm bg-neutral-50 shadow-sm"><span className="absolute left-3 right-3 top-4 h-px bg-neutral-300" /><span className="absolute left-3 right-6 top-7 h-px bg-neutral-300" /></div>
+              <div className="absolute bottom-4 left-4 rounded-full border border-white/70 bg-neutral-700/25 px-4 py-2 text-sm text-white backdrop-blur-sm">{project.nodeCount ?? 0} 个节点</div>
+            </div>
+            <div className="relative flex items-center gap-4 px-6 py-5">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-lg font-semibold">{project.name}</div>
+                <div className="mt-2 text-sm text-muted-foreground">更新于 {formatCanvasTime(project.updatedAt)}</div>
+              </div>
+              <button type="button" aria-label={`管理画布 ${project.name}`} className="grid size-9 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground" onClick={event => { event.stopPropagation(); setMenuProjectId(current => current === project.id ? '' : project.id) }} onPointerDown={event => event.stopPropagation()}>
+                <MoreHorizontal className="size-5" />
+              </button>
+              {menuProjectId === project.id && <div className="absolute bottom-14 right-5 z-20 w-44 rounded-2xl border bg-popover p-2 text-popover-foreground shadow-xl" onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}>
+                <button type="button" className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm hover:bg-muted" onClick={() => { setMenuProjectId(''); onRename(project) }}><Pencil className="size-4" />重命名画布</button>
+                <button type="button" className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-destructive hover:bg-destructive/10" onClick={() => { setMenuProjectId(''); onDelete(project) }}><Trash2 className="size-4" />删除画布</button>
+              </div>}
+            </div>
+          </article>)}
+          {!projects.length && <div className="rounded-[28px] border border-dashed p-10 text-center text-sm text-muted-foreground">还没有画布，点击“新建画布”即可开始。</div>}
+      </div>
+    </main>
+  </div>
+}
+
+function formatCanvasTime(updatedAt: number) {
+  if (!Number.isFinite(updatedAt) || updatedAt <= 0) return '刚刚'
+  return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(updatedAt))
 }

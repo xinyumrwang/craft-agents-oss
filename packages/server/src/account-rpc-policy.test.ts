@@ -102,6 +102,13 @@ describe('AccountScopedRpcServer', () => {
     await expect(handlers.get(RPC_CHANNELS.sessions.SET_MODEL)!(ctx,'mine','ws-1','forbidden')).rejects.toThrow('模型')
     expect(await handlers.get(RPC_CHANNELS.sessions.SET_MODEL)!(ctx,'mine','ws-1','test-model','desktop-old-connection')).toBe('server-managed-model')
   })
+  it('does not let managed clients override server model connection or reasoning settings',async()=>{
+    const {server,handlers}=harness(true)
+    const ctx={clientId:'c',principalId:'user-1',workspaceId:'ws-1'}
+    server.handle(RPC_CHANNELS.sessions.COMMAND,async()=>true)
+    await expect(handlers.get(RPC_CHANNELS.sessions.COMMAND)!(ctx,'mine',{type:'setConnection',connectionSlug:'client'})).rejects.toThrow('不支持')
+    await expect(handlers.get(RPC_CHANNELS.sessions.COMMAND)!(ctx,'mine',{type:'setThinkingLevel',thinkingLevel:'max'})).rejects.toThrow('不支持')
+  })
   it('projects the centrally selected DeepSeek model as the managed UI default',async()=>{
     const deepseek='pi/deepseek-v4-pro'
     const {server,handlers}=harness(true,{active:true,models:['claude-opus-4-8',deepseek],default_model:deepseek})

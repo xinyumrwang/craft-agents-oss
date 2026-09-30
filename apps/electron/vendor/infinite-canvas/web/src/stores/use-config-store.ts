@@ -22,6 +22,8 @@ export type ModelChannel = {
     apiKey: string;
     apiFormat: ApiCallFormat;
     models: ChannelModel[];
+    /** Synced from the host server. Credentials stay remote and this channel is read-only. */
+    managed?: boolean;
 };
 
 export type AiConfig = {
@@ -286,6 +288,7 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         apiKey: channel?.apiKey || "",
         apiFormat,
         models: normalizeChannelModels(channel?.models),
+        managed: channel?.managed === true,
     };
 }
 

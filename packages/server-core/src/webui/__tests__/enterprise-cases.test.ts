@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { listProjectAssets, loadWorkspaceProjects } from '@craft-agent/shared/projects'
+import { createProject, listProjectAssets, loadWorkspaceProjects } from '@craft-agent/shared/projects'
 import { ENTERPRISE_CASE_COUNT, enterpriseWorkspaceName, seedEnterpriseCases } from '../enterprise-cases'
 
 const roots: string[] = []
@@ -37,26 +37,30 @@ describe('ERP enterprise workspace onboarding', () => {
     expect(enterpriseWorkspaceName('   ')).toBe('Jonwork 企业工作区')
   })
 
-  it('seeds one guided enterprise case per allowed business without duplication', () => {
+  it('seeds one standards-based full workflow without duplication', () => {
     const root = mkdtempSync(join(tmpdir(), 'jonwork-enterprise-cases-'))
     roots.push(root)
-    expect(ENTERPRISE_CASE_COUNT).toBe(14)
-    expect(seedEnterpriseCases(root, skills)).toHaveLength(14)
-    expect(seedEnterpriseCases(root, skills)).toHaveLength(14)
+    expect(ENTERPRISE_CASE_COUNT).toBe(1)
+    expect(seedEnterpriseCases(root, skills)).toHaveLength(1)
+    expect(seedEnterpriseCases(root, skills)).toHaveLength(1)
 
-    const projects = loadWorkspaceProjects(root)
-    expect(projects).toHaveLength(14)
-    expect(new Set(projects.map(project => project.config.slug)).size).toBe(14)
-    for (const project of projects) {
-      expect(project.config.name).toContain('企业案例')
-      expect(listProjectAssets(root, project.config.slug).map(asset => asset.filename)).toEqual(['企业案例使用指南.md'])
-    }
+    const projects = loadWorkspaceProjects(root).filter(project => !project.config.archivedAt)
+    expect(projects).toHaveLength(1)
+    expect(projects[0]!.config.name).toBe('STANDARD-01｜产品设计全流程标准样例')
+    expect(listProjectAssets(root, projects[0]!.config.slug).map(asset => asset.filename)).toEqual(['产品设计全流程标准指南.md'])
   })
 
-  it('creates only cases for skills granted by ERP', () => {
+  it('requires a relevant ERP skill and archives only known legacy examples', () => {
     const root = mkdtempSync(join(tmpdir(), 'jonwork-enterprise-cases-'))
     roots.push(root)
-    seedEnterpriseCases(root, ['jonwork-user-insight', 'not-a-jonwork-skill'])
-    expect(loadWorkspaceProjects(root).map(project => project.config.slug)).toEqual(['case-01'])
+    createProject(root, { name: 'CASE-01｜用户洞察企业案例' })
+    createProject(root, { name: '模型调用验证' })
+    createProject(root, { name: '客户正式项目' })
+    expect(seedEnterpriseCases(root, ['not-a-jonwork-skill'])).toEqual([])
+    const afterCleanup = loadWorkspaceProjects(root)
+    expect(afterCleanup.filter(project => project.config.archivedAt).map(project => project.config.name).sort()).toEqual(['CASE-01｜用户洞察企业案例', '模型调用验证'])
+    expect(afterCleanup.filter(project => !project.config.archivedAt).map(project => project.config.name)).toEqual(['客户正式项目'])
+    expect(seedEnterpriseCases(root, ['jonwork-user-insight'])).toHaveLength(1)
+    expect(loadWorkspaceProjects(root).filter(project => !project.config.archivedAt).map(project => project.config.name).sort()).toEqual(['STANDARD-01｜产品设计全流程标准样例', '客户正式项目'])
   })
 })

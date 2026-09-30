@@ -33,6 +33,10 @@ export function JonworkSessionPanel({ maximized, onToggleMaximize }: { maximized
     useEffect(() => {
         const prepare = (event: MessageEvent) => {
             const message = event.data;
+            if (event.source === window.parent && message?.source === SOURCE && message.type === 'open-session-panel') {
+                useAgentStore.getState().openPanel();
+                return;
+            }
             if (event.source === window.parent && message?.source === SOURCE && message.type === 'select-workflow' && CANVAS_WORKFLOWS.some(item => item.id === message.workflowId)) {
                 if (sending) { setError('当前任务正在提交，请完成后再切换业务。'); return; }
                 if ((prompt.trim() || maskDraft) && !window.confirm('切换业务会清空未提交的要求和圈选草稿，继续？')) return;

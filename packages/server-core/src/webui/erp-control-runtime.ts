@@ -5,6 +5,7 @@ import type { AccountStore, PublicAccount } from './accounts'
 import { ErpSsoClient, resolveManagedDefaultModel, type AccessSnapshot } from './erp-sso'
 import { ControlLedger } from './control-ledger'
 import { decodeBundle, type Release } from './erp-resource-bundle'
+import { seedEnterpriseCases } from './enterprise-cases'
 
 export interface ExecutionPolicyInput { workspaceId: string; model: string; sources: string[]; skills: string[] }
 export interface ExecutionReceipt { complete(status: 'complete' | 'failed' | 'interrupted' | 'unknown'): Promise<void> }
@@ -154,6 +155,7 @@ export class ErpControlRuntime implements ExecutionPolicy {
     this.cache.set(account.id, {value:p, expires:Date.now()+p.ttl_seconds*1000})
     await this.syncGrants(account.id, p.member_id)
     await this.prepare(account.workspaceId)
+    seedEnterpriseCases(this.accounts.getSkillWorkspaceRoot(account.id), p.skills)
     return this.publicAccount(account)
   }
   publicAccount(a: PublicAccount) { return this.accounts.getExternalMember(a.id) ? {...a, credits:this.ledger.balance(a.id).available, billingMode:'server', executionMode:'server_only'} : a }
@@ -264,6 +266,7 @@ export class ErpControlRuntime implements ExecutionPolicy {
             active = p.active
             if (active) {
               await this.syncGrants(a.id, member)
+              seedEnterpriseCases(this.accounts.getSkillWorkspaceRoot(a.id), p.skills)
             }
           } catch { this.cache.delete(a.id); syncError = 'policy_unavailable' }
           // Revoking execution access must never prevent delivery of past usage.

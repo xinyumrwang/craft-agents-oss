@@ -7,7 +7,7 @@ describe('ERP model picker boundary', () => {
     const policy = parseModelEntitlement(base)
     expect(policy).toEqual({ status: 'managed', models: [] })
     expect(maySelectModel(policy, 'claude-opus-4-8')).toBe(false)
-    expect(modelEntitlementLabel(policy)).toContain('暂无模型授权')
+    expect(modelEntitlementLabel(policy)).toContain('服务器尚未配置')
   })
   test('only exact model ids are selectable', () => {
     const policy = parseModelEntitlement({ ...base, models: ['allowed', 'allowed'] })

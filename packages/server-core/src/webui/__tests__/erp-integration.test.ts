@@ -73,6 +73,13 @@ describe('ERP SSO and reliable business integration',()=>{
     expect(accessSnapshot({...policy,models,default_model:'pi/deepseek-v4-flash'}).default_model).toBe('pi/deepseek-v4-flash')
     expect(()=>accessSnapshot({...policy,models,default_model:'pi/not-authorized'})).toThrow()
   })
+  it('accepts only ERP-authorized canvas model capabilities and defaults',()=>{
+    const models=['gpt-image-approved','gpt-text-approved']
+    const parsed=accessSnapshot({...policy,models,model_capabilities:{'gpt-image-approved':'image','gpt-text-approved':'text'},canvas_defaults:{image:'gpt-image-approved',text:'gpt-text-approved'}})
+    expect(parsed.canvas_defaults).toEqual({image:'gpt-image-approved',text:'gpt-text-approved'})
+    expect(()=>accessSnapshot({...policy,models,model_capabilities:{forbidden:'image'}})).toThrow()
+    expect(()=>accessSnapshot({...policy,models,canvas_defaults:{image:'forbidden'}})).toThrow()
+  })
   it('uses the ready server default when ERP intentionally leaves the model allow-list empty',async()=>{
     const f=fixture({policy:{models:[]},serverDefaultModel:'gpt-5.6-sol'})
     const accountRecord=await f.runtime.provision({member_id:member,account_id:account})

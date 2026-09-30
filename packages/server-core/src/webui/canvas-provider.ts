@@ -14,9 +14,9 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 
 // Only administrators configure this fixed HTTP provider. No tools, shell, plugins,
 // redirects, client URLs or model-generated URLs are executed by this path.
-export function canvasProviderConfig(mode: 'image' | 'text'): CanvasProviderConfig {
+export function canvasProviderConfig(mode: 'image' | 'text', modelOverride?: string): CanvasProviderConfig {
   const prefix = mode === 'image' ? 'JONWORK_CANVAS_IMAGE' : 'JONWORK_CANVAS_TEXT'
-  const model = process.env[`${prefix}_MODEL`]?.trim()
+  const model = modelOverride?.trim() || process.env[`${prefix}_MODEL`]?.trim()
   const key = process.env[`${prefix}_API_KEY`]?.trim()
   const baseUrl = process.env[`${prefix}_BASE_URL`]?.trim() || 'https://api.openai.com/v1'
   if (!model || !key) throw new Error(`请管理员配置服务端 ${prefix}_MODEL 和 ${prefix}_API_KEY；请勿在画布填写密钥。`)
@@ -60,13 +60,13 @@ export function readCanvasProviderArtifacts(store: CanvasStore, entry: CanvasUpd
 }
 
 /** Keep provider requests alive across bounded RPC polls, never across a process crash. */
-export async function stepCanvasProvider(store: CanvasStore, args: Parameters<typeof advanceCanvasProvider>[1], billing: CanvasModelBilling) {
+export async function stepCanvasProvider(store: CanvasStore, args: Parameters<typeof advanceCanvasProvider>[1], billing: CanvasModelBilling, config?: CanvasProviderConfig) {
   await billing.authorize()
   const key = hash(JSON.stringify([store.path, args]))
   let job = running.get(key)
   if (!job) {
     if (running.size >= 1000) throw new Error('生成服务繁忙，请稍后重试。')
-    job = advanceCanvasProvider(store, args, billing)
+    job = advanceCanvasProvider(store, args, billing, fetch, config)
     running.set(key, job)
     const remove = () => { running.delete(key) }
     void job.then(remove, remove)

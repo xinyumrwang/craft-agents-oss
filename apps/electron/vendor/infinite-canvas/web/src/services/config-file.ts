@@ -32,6 +32,21 @@ export async function importAppConfig(file: File) {
         throw new Error(i18n.t("config.invalidFile"));
     }
     if (data.app !== "infinite-canvas" || data.version !== 1 || !data.config || !data.webdav || !data.promptSources) throw new Error(i18n.t("config.invalidFile"));
-    useConfigStore.setState({ config: data.config, webdav: data.webdav });
+    const current = useConfigStore.getState().config;
+    const managed = current.channels.some((channel) => channel.managed);
+    const config = managed ? {
+        ...data.config,
+        channels: current.channels,
+        models: current.models,
+        baseUrl: current.baseUrl,
+        apiKey: current.apiKey,
+        apiFormat: current.apiFormat,
+        model: current.model,
+        imageModel: current.imageModel,
+        videoModel: current.videoModel,
+        textModel: current.textModel,
+        audioModel: current.audioModel,
+    } : data.config;
+    useConfigStore.setState({ config, webdav: data.webdav });
     usePromptSourceStore.setState(data.promptSources);
 }

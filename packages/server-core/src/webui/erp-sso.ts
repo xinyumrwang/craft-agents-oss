@@ -4,6 +4,9 @@ export interface AccessSnapshot {
   schema_version: 2; member_id: string; account_id: string; tenant_id: string; active: boolean; role: 'admin' | 'user'
   models: string[]; skills: string[]; sources: string[]; task_price: number; max_concurrency: number
   default_model?: string
+  /** ERP-owned canvas presentation/routing metadata. Secrets are never part of this snapshot. */
+  model_capabilities?: Record<string, 'image' | 'video' | 'text' | 'audio'>
+  canvas_defaults?: Partial<Record<'image' | 'video' | 'text' | 'audio', string>>
   ttl_seconds: number; policy_version: string; pricing_version: 'fixed-task-v1'; execution_mode: 'server_only'
   desktop_channel: '' | 'internal'
 }
@@ -39,9 +42,14 @@ export function accessSnapshot(value: unknown): AccessSnapshot {
     || !Number.isSafeInteger(p.max_concurrency) || p.max_concurrency < 1 || p.max_concurrency > 100
     || !Number.isSafeInteger(p.ttl_seconds) || p.ttl_seconds < 1 || p.ttl_seconds > 60 || !/^[a-f0-9]{64}$/.test(p.policy_version)
     || (p.default_model !== undefined && (!validPolicyItem(p.default_model) || !p.models?.includes(p.default_model)))
+    || (p.model_capabilities !== undefined && (!p.model_capabilities || typeof p.model_capabilities !== 'object' || Array.isArray(p.model_capabilities)
+      || Object.entries(p.model_capabilities).some(([model, capability]) => !p.models?.includes(model) || !['image', 'video', 'text', 'audio'].includes(capability))))
+    || (p.canvas_defaults !== undefined && (!p.canvas_defaults || typeof p.canvas_defaults !== 'object' || Array.isArray(p.canvas_defaults)
+      || Object.entries(p.canvas_defaults).some(([capability, model]) => !['image', 'video', 'text', 'audio'].includes(capability) || typeof model !== 'string' || !p.models?.includes(model))))
     || [p.models, p.skills, p.sources].some(v => !Array.isArray(v) || v.length > 200 || new Set(v).size !== v.length || v.some(s => !validPolicyItem(s)))) throw new Error('Invalid ERP access snapshot')
   return { schema_version: 2, member_id: p.member_id, account_id: p.account_id, tenant_id: p.tenant_id, active: p.active, role: p.role,
-    models: p.models, ...(p.default_model ? {default_model:p.default_model} : {}), skills: p.skills, sources: p.sources, task_price: p.task_price, max_concurrency: p.max_concurrency,
+    models: p.models, ...(p.default_model ? {default_model:p.default_model} : {}), ...(p.model_capabilities ? {model_capabilities:p.model_capabilities} : {}),
+    ...(p.canvas_defaults ? {canvas_defaults:p.canvas_defaults} : {}), skills: p.skills, sources: p.sources, task_price: p.task_price, max_concurrency: p.max_concurrency,
     ttl_seconds: p.ttl_seconds, policy_version: p.policy_version, pricing_version: p.pricing_version, execution_mode: p.execution_mode,
     desktop_channel: p.desktop_channel }
 }

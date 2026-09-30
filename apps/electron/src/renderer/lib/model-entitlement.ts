@@ -35,7 +35,7 @@ export function maySelectModel(policy: ModelEntitlement, model: string): boolean
 export function modelEntitlementLabel(policy: ModelEntitlement): string {
   if (policy.status === 'loading') return '正在读取 ERP 模型授权'
   if (policy.status === 'error') return '模型授权不可用，请重试'
-  if (policy.status === 'managed' && !policy.models.length) return '暂无模型授权，请联系企业管理员'
+  if (policy.status === 'managed' && !policy.models.length) return '服务器尚未配置可用模型'
   return '请选择已授权模型'
 }
 

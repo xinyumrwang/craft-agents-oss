@@ -20,7 +20,7 @@ function fixture() {
   const workspace=join(root,'alice');mkdirSync(workspace)
   const ctx={clientId:'c',principalId:'alice',workspaceId:'ws-alice'}
   const accounts={getById:()=>({id:'alice',workspaceId:'ws-alice'}),getSkillWorkspaceRoot:()=>workspace,getExternalMember:()=> 'erp-member'} as any
-  const policy={active:true,models:['fixture','meshy/image-to-3d'],skills:[] as string[]}
+  const policy={active:true,models:['fixture','meshy/image-to-3d'],canvas_defaults:{image:'fixture',text:'fixture'},skills:[] as string[]}
   const control={policy:async()=>policy,connectionForModel:async()=> 'server-managed-model'} as any
   const sessions:Array<{id:string;workspaceId:string;projectId?:string}>=[{id:'mine',workspaceId:'ws-alice'}]
   const server=new AccountScopedRpcServer({handle:(channel:string,handler:Function)=>handlers.set(channel,handler)} as any,accounts,
@@ -134,7 +134,9 @@ describe('account project filesystem boundary',()=>{
     f.sessions[0]!.projectId = project.id
     f.server.handle(RPC_CHANNELS.canvas.CALL_TOOL, async () => { throw Error('forged receipt reached publisher') })
     const call = f.handlers.get(RPC_CHANNELS.canvas.CALL_TOOL)!
-    expect(await call(f.ctx, 'ws-alice', 'get_infinite_canvas_capabilities', {})).toEqual({ content: [], structuredContent: { managed: true }, isError: false })
+    const capabilities = await call(f.ctx, 'ws-alice', 'get_infinite_canvas_capabilities', {})
+    expect(capabilities).toMatchObject({ content: [], structuredContent: { managed: true, defaults: { image: 'fixture', text: 'fixture' } }, isError: false })
+    expect(JSON.stringify(capabilities)).not.toContain('API_KEY')
     const store = new CanvasStore(f.workspace)
     const snapshot = { projectId: project.id, nodes: [] }
     await store.save(snapshot); await store.bindSession('mine', project.id)
