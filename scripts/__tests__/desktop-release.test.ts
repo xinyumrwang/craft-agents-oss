@@ -48,6 +48,9 @@ describe('independent desktop releases', () => {
     for (const file of ['main.cjs', 'bootstrap-preload.cjs', 'renderer/index.html']) writeFileSync(join(dist, file), 'test build')
     writeFileSync(join(dist, 'release-build.json'), JSON.stringify({ schemaVersion: 1,
       profileHash: createHash('sha256').update(config).digest('hex'), outputs: outputHashes(root) }))
+    expect(() => verifyBuildStamp(root)).toThrow('source')
+    writeFileSync(join(dist, 'release-build.json'), JSON.stringify({ schemaVersion: 2, sourceCommit: 'a'.repeat(40),
+      profileHash: createHash('sha256').update(config).digest('hex'), outputs: outputHashes(root) }))
     expect(() => verifyBuildStamp(root)).not.toThrow()
     writeFileSync(profile, JSON.stringify({ ...base, allowCustomAccountServer: false }))
     expect(() => verifyBuildStamp(root)).toThrow('profile changed')
